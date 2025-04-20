@@ -1,0 +1,4 @@
+scikit-learn
+minisom
+scikit-fuzzy
+networkx 

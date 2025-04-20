@@ -1,0 +1,13 @@
+curl -X POST http://localhost:5050/predict \
+-H "Content-Type: application/json" \
+-d '{
+    "pH": 7.5,
+    "Hardness": 200,
+    "Solids": 20000,
+    "Chloramines": 7,
+    "Sulfate": 350,
+    "Conductivity": 500,
+    "Organic_carbon": 14,
+    "Trihalomethanes": 70,
+    "Turbidity": 4
+}'
