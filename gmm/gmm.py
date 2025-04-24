@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -13,8 +11,6 @@ import joblib
 import os
 import warnings
 
-# Suppress warnings if needed
-# warnings.filterwarnings("ignore", category=FutureWarning)
 
 def load_data(file_path='../data.csv'):
     """Load the scaled dataset."""
@@ -42,10 +38,10 @@ def find_optimal_components(X, max_components=10, plot_dir='gmm/plots'):
     for n_components in n_components_range:
         print(f"Calculating for n_components={n_components}...")
         gmm = GaussianMixture(n_components=n_components, 
-                              covariance_type='full', # Common choice, others: 'tied', 'diag', 'spherical'
+                              covariance_type='full',
                               random_state=42,
-                              n_init=5, # Fit multiple times to avoid poor local optima
-                              init_params='kmeans' # Initialize means with kmeans for stability
+                              n_init=5, 
+                              init_params='kmeans' 
                              )
         gmm.fit(X)
         bics.append(gmm.bic(X))
@@ -67,8 +63,6 @@ def find_optimal_components(X, max_components=10, plot_dir='gmm/plots'):
     plt.close()
     print(f"BIC/AIC plot saved to {bic_aic_plot_path}")
 
-    # --- Determine Optimal K based on BIC (often preferred for model selection) ---
-    # Fallback to AIC if BIC suggests k=1, as silhouette score requires k>=2
     optimal_n_components_bic = n_components_range[np.argmin(bics)]
     print(f"Optimal number of components based on BIC: {optimal_n_components_bic}")
 
@@ -94,8 +88,6 @@ def perform_gmm(X, n_components, random_state=42):
     gmm.fit(X)
     labels = gmm.predict(X)
     probs = gmm.predict_proba(X)
-    
-    # Calculate silhouette score only if k > 1
     silhouette_avg = -999 # Default placeholder
     if n_components > 1:
         try:
@@ -104,14 +96,10 @@ def perform_gmm(X, n_components, random_state=42):
             print(f"  Average Silhouette Score: {silhouette_avg:.4f}")
         except ValueError as e:
             print(f"Could not calculate Silhouette Score: {e}")
-            # This might happen if GMM fitting results in only one effective label
-            # despite n_components > 1, though less likely with n_init > 1.
-            silhouette_avg = -998 # Indicate calculation failure
+            silhouette_avg = -998 
     else:
         print("GMM completed with k=1. Silhouette score not applicable.")
         
-    # Optional: print log-likelihood if needed
-    # print(f"  Log-Likelihood: {gmm.score(X):.4f}")
     
     return gmm, labels, probs
 
@@ -134,8 +122,6 @@ def visualize_clusters_pca(X, labels, y, plot_dir='gmm/plots', algorithm_name='G
         plt.scatter(cluster_points[:, 0], cluster_points[:, 1], s=50, c=[color],
                     label=f'Cluster {cluster_label}', alpha=0.6)
 
-    # You could potentially plot ellipses representing the covariance of each component
-    # but this can be complex to implement and interpret correctly.
 
     plt.title(f'{algorithm_name} Clustering Results (k={k}, PCA Reduced)')
     plt.xlabel('Principal Component 1')

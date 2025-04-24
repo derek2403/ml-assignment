@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -14,8 +12,6 @@ import joblib
 import os
 import warnings
 
-# Suppress warnings if needed
-# warnings.filterwarnings("ignore", category=FutureWarning)
 
 def load_data(file_path='../data.csv'):
     """Load the scaled dataset."""
@@ -31,9 +27,8 @@ def load_data(file_path='../data.csv'):
         print("'Potability' column not found.")
         X = df
         y = None
-    # FCM requires data in shape (n_features, n_samples)
     X_fcm = X.T
-    return X, X_fcm, y, df # Return both X shapes, y, and original df
+    return X, X_fcm, y, df 
 
 def find_optimal_clusters_fcm(X_fcm, max_clusters=10, m=2, plot_dir='fuzzy/plots'):
     """Find optimal number of clusters (c) for FCM using validity indices."""
@@ -42,10 +37,8 @@ def find_optimal_clusters_fcm(X_fcm, max_clusters=10, m=2, plot_dir='fuzzy/plots
     pes = []
     cluster_range = range(2, max_clusters + 1)
     
-    # Note: FPC requires the membership matrix U
-    #       PE also requires U
 
-    data = X_fcm # Use the (features, samples) shape
+    data = X_fcm 
     
     for ncenters in cluster_range:
         print(f"Calculating for c={ncenters}...")
@@ -54,8 +47,6 @@ def find_optimal_clusters_fcm(X_fcm, max_clusters=10, m=2, plot_dir='fuzzy/plots
                 data, ncenters, m, error=0.005, maxiter=1000, init=None, seed=42)
             
             fpcs.append(fpc)
-            # Calculate Partition Entropy (PE) - skfuzzy doesn't have a direct function
-            # PE = -sum(u_ik * log(u_ik)) / N
             pe_val = -np.sum(u * np.log2(u + 1e-9)) / data.shape[1] # Add epsilon for log(0)
             pes.append(pe_val)
             print(f"  FPC: {fpc:.4f}, PE: {pe_val:.4f}")
@@ -95,21 +86,14 @@ def find_optimal_clusters_fcm(X_fcm, max_clusters=10, m=2, plot_dir='fuzzy/plots
     fig.tight_layout()  # otherwise the right y-label is slightly clipped
     plt.title('FCM Cluster Validity Indices')
     plt.xticks(list(cluster_range))
-    # Add combined legend
-    # lines, labels = ax1.get_legend_handles_labels()
-    # lines2, labels2 = ax2.get_legend_handles_labels()
-    # ax2.legend(lines + lines2, labels + labels2, loc='best')
     
     validity_plot_path = os.path.join(plot_dir, 'fcm_validity_indices.png')
     plt.savefig(validity_plot_path)
     plt.close()
     print(f"Validity indices plot saved to {validity_plot_path}")
 
-    # --- Determine Optimal c based on FPC ---
-    # Often maximizing FPC is used, though minimizing PE is also valid.
     optimal_c = valid_c_range_fpc[np.argmax(valid_fpc_scores)]
     print(f"Optimal c based on maximizing FPC: {optimal_c}")
-    # Note: The "best" c can be subjective, also consider PE minimum or domain knowledge.
 
     return optimal_c
 
@@ -121,7 +105,6 @@ def calculate_xie_beni(data_points, centers, membership, m):
     term1_sum = 0
     for k in range(n_clusters):
         for i in range(n_samples):
-            # Use .iloc for integer-position row access in pandas DataFrame
             term1_sum += (membership[k, i] ** m) * (np.linalg.norm(data_points.iloc[i] - centers[k]) ** 2)
             
     min_center_dist_sq = np.inf
@@ -146,8 +129,6 @@ def perform_fcm(X_fcm, n_clusters, m=2, error=0.005, maxiter=1000, random_seed=4
     # Calculate Partition Entropy (PE)
     pe = -np.sum(u * np.log2(u + 1e-9)) / X_fcm.shape[1] 
     
-    # Calculate Xie-Beni (XB)
-    # Need data in (samples, features) format for XB calculation distance
     X_orig_shape = X_fcm.T 
     xb = calculate_xie_beni(X_orig_shape, cntr, u, m)
     
@@ -278,11 +259,10 @@ def main():
     DATA_FILE = '../data.csv'
     OUTPUT_DIR = '.'
     PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
-    MODEL_FILE = os.path.join(OUTPUT_DIR, 'fuzzy_model.joblib') # Save results dict
-    MAX_CLUSTERS = 10 # Max clusters to test for validity indices
-    FUZZINESS_M = 2.0 # Standard fuzziness parameter
+    MODEL_FILE = os.path.join(OUTPUT_DIR, 'fuzzy_model.joblib') 
+    MAX_CLUSTERS = 10 
+    FUZZINESS_M = 2.0 
     RANDOM_STATE = 42 
-    # Note: skfuzzy cmeans seed is handled internally if passed
 
     # --- Ensure output directories exist ---
     os.makedirs(PLOT_DIR, exist_ok=True)

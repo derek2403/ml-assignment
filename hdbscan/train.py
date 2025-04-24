@@ -1,20 +1,16 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import hdbscan # Import HDBSCAN
-from sklearn.metrics import silhouette_score, davies_bouldin_score # Add Davies-Bouldin
+import hdbscan
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import joblib
 import os
 import warnings
 
-# Suppress warnings if needed
-# warnings.filterwarnings("ignore")
 
 # === Configuration ===
 DATA_FILE = '../data.csv'
@@ -24,13 +20,11 @@ MODEL_FILE = os.path.join(OUTPUT_DIR, 'hdbscan_model.joblib') # Changed model na
 CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'hdbscan_clustered_data.csv') # Simplified template
 RANDOM_STATE = 42 # Used for PCA, not directly by HDBSCAN core algorithm
 
-# --- HDBSCAN Hyperparameters ---
-# Adjust these based on your data and desired granularity
-MIN_CLUSTER_SIZE = 15 # Minimum number of points required to form a cluster
-MIN_SAMPLES = None    # Default: None (uses min_cluster_size). Controls how conservative clustering is (like DBSCAN min_pts)
-                      # Higher values -> more points declared noise. Try values like 5, 10, or min_cluster_size.
-CLUSTER_SELECTION_EPSILON = 0.0 # Epsilon for cluster persistence stability (default is 0.0)
-METRIC = 'euclidean' # Distance metric
+
+MIN_CLUSTER_SIZE = 15 
+MIN_SAMPLES = None    
+CLUSTER_SELECTION_EPSILON = 0.0 
+METRIC = 'euclidean' 
 
 # --- Ensure output directories exist ---
 os.makedirs(PLOT_DIR, exist_ok=True)
@@ -93,8 +87,6 @@ def perform_hdbscan(X_scaled):
     print(f"  Number of noise points: {n_noise} ({ (n_noise / len(labels) * 100) :.1f}%)")
     print(f"  Total points: {len(labels)}")
 
-    # --- Evaluation Metrics (if possible) ---
-    # Only calculate if more than 1 cluster is found (excluding noise)
     if n_clusters > 1:
         # Create a mask to select only non-noise points for evaluation
         core_samples_mask = (labels != -1)
@@ -189,7 +181,6 @@ def main():
     print(f"\nHDBSCAN model saved to {MODEL_FILE}")
 
     # --- Add Cluster Info to Original Data (Optional Saving) ---
-    # Use original df index if available, otherwise assume row correspondence
     df_clustered = df_original.copy()
     df_clustered['HDBSCAN_Cluster'] = labels
     df_clustered['HDBSCAN_Prob'] = probabilities

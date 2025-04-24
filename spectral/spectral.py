@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -9,12 +7,10 @@ from sklearn.cluster import SpectralClustering
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler # Good practice
 from sklearn.decomposition import PCA
-import joblib # Although spectral clustering model itself is simple, consistency
+import joblib 
 import os
 import warnings
 
-# Suppress warnings if needed
-# warnings.filterwarnings("ignore", category=FutureWarning)
 
 def load_data(file_path='../data.csv'):
     """Load the scaled dataset."""
@@ -38,15 +34,11 @@ def find_optimal_k_silhouette(X, max_k=10, plot_dir='spectral/plots', random_sta
     silhouette_scores = []
     k_range = range(2, max_k + 1)
 
-    # Note: Spectral Clustering can be slow, especially for large k or N
-    # Consider reducing max_k or sampling X if performance is an issue
-    # X_sample = X[np.random.choice(X.shape[0], 1000, replace=False)] # Example sampling
+
 
     for k in k_range:
         print(f"Calculating for k={k}...")
-        # Use affinity='nearest_neighbors' as RBF can be very slow
-        # n_neighbors default is 10, might need tuning
-        # assign_labels='kmeans' is common, 'discretize' is another option
+
         spectral = SpectralClustering(n_clusters=k,
                                     affinity='nearest_neighbors', # Often faster than 'rbf'
                                     assign_labels='kmeans',
@@ -212,9 +204,7 @@ def main():
     # --- Perform Spectral Clustering ---
     model, labels, silhouette_avg = perform_spectral_clustering(X_scaled, k=optimal_k, random_state=RANDOM_STATE)
 
-    # --- Save Model ---
-    # Note: SpectralClustering object doesn't store much state after fit_predict,
-    # primarily the labels_ attribute, but we save it for completeness.
+
     k_str_model = str(optimal_k) if not np.isnan(silhouette_avg) else "Error"
     model_filename = MODEL_FILE_TEMPLATE.format(k=k_str_model)
     try:
@@ -226,10 +216,7 @@ def main():
     # --- Add Cluster Labels to Original Data ---
     df_clustered = df_original_with_target.loc[X.index].copy()
     df_clustered['Cluster'] = labels
-    # k_str = str(optimal_k) if not np.isnan(silhouette_avg) else "Error"
-    # clustered_data_file = CLUSTERED_DATA_FILE_TEMPLATE.format(k=k_str)
-    # df_clustered.to_csv(clustered_data_file, index=False)
-    # print(f"Clustered data (k={k_str}) saved to {clustered_data_file}")
+
     print("\nCluster labels generated (not saving clustered data file).")
 
     # --- Visualize Results ---

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -7,13 +5,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, silhouette_samples
-from sklearn.preprocessing import StandardScaler  # Though data is scaled, good practice to ensure
+from sklearn.preprocessing import StandardScaler  
 from sklearn.decomposition import PCA
 import joblib
 import os
 import warnings
 
-# Suppress specific warnings
+
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn.cluster._kmeans")
 warnings.filterwarnings("ignore", category=UserWarning, message="KMeans is known to have a memory leak on Windows with MKL")
 
@@ -85,14 +83,12 @@ def find_optimal_k(X, max_k=10, plot_dir='kmeans/plot'):
         # --- Determine Optimal K based on Silhouette Score ---
         optimal_k_silhouette = k_range[np.argmax(silhouette_scores)]
         print(f"Optimal K based on Silhouette Score: {optimal_k_silhouette}")
-        # You might also visually inspect the Elbow plot for an "elbow" point.
-        # Let's tentatively use the silhouette score's recommendation.
+
         optimal_k = optimal_k_silhouette
     else:
         # Fallback if only k=1 was tested or no scores available
         print("Warning: Could not determine optimal k from Silhouette. Inspect Elbow plot manually.")
-        # Ask user or default? For now, let's default to a common value like 3, but highlight this.
-        optimal_k = 3 # Default or ask user
+        optimal_k = 3
         print(f"Defaulting to k={optimal_k}. Please verify using the Elbow plot.")
 
     return optimal_k
@@ -195,17 +191,8 @@ def main():
     joblib.dump(kmeans_model, MODEL_FILE)
     print(f"\nK-Means model saved to {MODEL_FILE}")
 
-    # --- Add Cluster Labels to Original Data ---
-    # Use the index from X to align labels correctly with the original DataFrame
-    # (which might include the Potability column)
     df_clustered = df_original_with_target.loc[X.index].copy() # Ensure we use correct rows if some were dropped
-    # df_clustered['Cluster'] = labels
-    # df_clustered.to_csv(CLUSTERED_DATA_FILE, index=False)
-    # print(f"Clustered data saved to {CLUSTERED_DATA_FILE}")
     print("\nCluster labels generated (not saving clustered data file).")
-
-    # --- Visualize Results ---
-    # Pass X_scaled for visualization as that's what clustering was done on
     visualize_clusters_pca(X_scaled, labels, centers, y, plot_dir=PLOT_DIR, k=optimal_k, random_state=RANDOM_STATE)
 
     print("\nK-Means clustering process completed!")

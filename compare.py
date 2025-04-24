@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -14,30 +12,25 @@ import glob
 import os
 from minisom import MiniSom # For SOM loading
 
-# --- Configuration ---
-# Set the path to the dataset used for training/evaluation
 EVAL_DATA_FILE = 'data.csv' 
 
-# Define paths to saved models - adjust if your filenames are different
-# Using glob for models where parameters might be in the filename
 
 
 MODEL_PATHS = {
     'K-Means': 'kmeans/kmeans.joblib',
-    'Hierarchical': 'hierarchical/hierarchical.joblib', # Assumes k=2 was saved
-    'DBSCAN': 'dbscan/dbscan.joblib', # Take first match if exists
-    'HDBSCAN': 'hdbscan/hdbscan.joblib', # Added HDBSCAN
+    'Hierarchical': 'hierarchical/hierarchical.joblib', 
+    'DBSCAN': 'dbscan/dbscan.joblib', 
+    'HDBSCAN': 'hdbscan/hdbscan.joblib', 
     'GMM': 'gmm/gmm.joblib',
-    'Spectral': 'spectral/spectral.joblib', # Take first match if exists
+    'Spectral': 'spectral/spectral.joblib', 
     'SOM': 'som/som.joblib',
     'Fuzzy C-Means': 'fuzzy/fuzzy.joblib'
 }
 
-OUTPUT_DIR = 'comparison' # Changed from '/comparision'
+OUTPUT_DIR = 'comparison' 
 PLOT_FILENAME = 'model_comparison_silhouette.png'
 RANDOM_STATE = 42
 
-# --- Helper Functions ---
 
 def load_eval_data(file_path):
     """Load and scale evaluation dataset features."""

@@ -1,23 +1,20 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch # For legend
+from matplotlib.patches import Patch 
 import seaborn as sns
-from sklearn.preprocessing import StandardScaler # Good practice
+from sklearn.preprocessing import StandardScaler 
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans # To cluster SOM nodes
+from sklearn.cluster import KMeans 
 from minisom import MiniSom
 import joblib
 import os
 import math
 import warnings
 
-# Suppress warnings if needed
-# warnings.filterwarnings("ignore", category=FutureWarning)
+
 
 def load_data(file_path='../data.csv'):
     """Load the scaled dataset."""
@@ -134,8 +131,6 @@ def plot_som_node_clusters(som, node_cluster_labels, plot_dir='som/plots'):
     plt.pcolor(node_cluster_labels.T, cmap=plt.cm.get_cmap('viridis', num_clusters))
     plt.colorbar(ticks=range(num_clusters), label='Node Cluster ID')
     
-    # Add markers for data points colored by their BMU's cluster (optional, can be slow)
-    # Or just show the node cluster background
     
     plt.title(f'SOM Grid Colored by Node Cluster (k={num_clusters})')
     plt.xticks(np.arange(som.get_weights().shape[0] + 1))
@@ -211,8 +206,7 @@ def main():
     SOM_MODEL_FILE = os.path.join(OUTPUT_DIR, 'som_model.joblib') # Changed extension
     MAX_K_NODES = 10 # Max clusters for SOM nodes
     RANDOM_STATE = 42
-    SOM_ITERATIONS = 10000 # More iterations can improve SOM quality
-    # SOM_GRID_SIZE = (10, 10) # Optionally override automatic size
+    SOM_ITERATIONS = 10000 
     SOM_GRID_SIZE = None
 
     # --- Ensure output directories exist ---
