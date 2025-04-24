@@ -26,6 +26,7 @@ MODEL_PATHS = {
     'K-Means': 'kmeans/kmeans.joblib',
     'Hierarchical': 'hierarchical/hierarchical.joblib', # Assumes k=2 was saved
     'DBSCAN': 'dbscan/dbscan.joblib', # Take first match if exists
+    'HDBSCAN': 'hdbscan/hdbscan.joblib', # Added HDBSCAN
     'GMM': 'gmm/gmm.joblib',
     'Spectral': 'spectral/spectral.joblib', # Take first match if exists
     'SOM': 'som/som.joblib',
@@ -92,6 +93,11 @@ def get_labels_from_model(model_name, model_path, X_scaled):
             k = model.n_clusters
         elif model_name == 'DBSCAN':
             # Assumes model object saved after fit_predict stores labels
+            labels = model.labels_
+            # k is number of clusters excluding noise
+            k = len(set(labels)) - (1 if -1 in labels else 0)
+        elif model_name == 'HDBSCAN':
+            # For HDBSCAN model, similar handling as DBSCAN
             labels = model.labels_
             # k is number of clusters excluding noise
             k = len(set(labels)) - (1 if -1 in labels else 0)

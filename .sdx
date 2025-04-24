@@ -1,13 +1,7 @@
-curl -X POST http://localhost:5050/predict \
--H "Content-Type: application/json" \
--d '{
-    "pH": 7.5,
-    "Hardness": 200,
-    "Solids": 20000,
-    "Chloramines": 7,
-    "Sulfate": 350,
-    "Conductivity": 500,
-    "Organic_carbon": 14,
-    "Trihalomethanes": 70,
-    "Turbidity": 4
-}'
+
+
+Abou Najm, M., Azizi, M., El-Fadel, M., & El Jamal, D. (2024). Identifying associations of water quality parameters using cluster analysis. Marine Pollution Bulletin, 200, 115905. https://doi.org/10.1016/j.marpolbul.2024.115905
+
+Bouri, S., Bouzidi, H., Zouaoui, A., Ghrabi, A., & Mzoughi, N. (2024). Deep hierarchical cluster analysis for assessing the water quality in a semi-arid region. Environmental Advances, 17, 100388. https://doi.org/10.1016/j.envadv.2024.100388
+
+Ouyang, Y. (2005). Water quality monitoring using cluster analysis and linear models. Environmental Monitoring and Assessment, 108(1), 27–37. https://doi.org/10.1007/s10661-005-3960-1
