@@ -14,7 +14,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:5050/:path*',
+        destination: 'https://e3c329acf714051138becd9199470e6d1ae0cabd-5050.dstack-prod5.phala.network:5050/:path*',
       },
     ];
   },

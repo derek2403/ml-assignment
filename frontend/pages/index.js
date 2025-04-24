@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { predictWaterQuality } from '../utils/api';
 
 // Define parameter ranges here for sliders
 const paramRanges = {
@@ -21,6 +20,30 @@ const getInitialFormData = () => {
     initialData[param] = ((paramRanges[param].max + paramRanges[param].min) / 2).toFixed(paramRanges[param].step < 1 ? 1 : 0);
   }
   return initialData;
+};
+
+// Standardization functions moved from utils/api.js
+const standardizeValue = (value, min, max) => {
+  // Scale to [-3, 3] range
+  // Avoid division by zero if max equals min
+  if (max === min) return 0; 
+  return ((value - min) / (max - min)) * 6 - 3;
+};
+
+const standardizeInput = (inputData) => {
+  const standardizedData = {};
+  for (const [param, value] of Object.entries(inputData)) {
+    const range = paramRanges[param];
+    if (!range) {
+        throw new Error(`Unknown parameter for standardization: ${param}`);
+    }
+    const floatValue = parseFloat(value);
+    if (isNaN(floatValue)) {
+      throw new Error(`Invalid input for ${param}: Please enter a number.`);
+    }
+    standardizedData[param] = standardizeValue(floatValue, range.min, range.max);
+  }
+  return standardizedData;
 };
 
 export default function Home() {
@@ -46,8 +69,26 @@ export default function Home() {
     setIsLoading(true);
 
     try {
-      // Send formData directly, api.js handles parsing now
-      const data = await predictWaterQuality(formData);
+      // Standardize the input data before sending
+      const standardizedData = standardizeInput(formData);
+      console.log('Sending standardized data to API:', standardizedData);
+      
+      // Call our Next.js API route
+      const response = await fetch('/api/predict', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(standardizedData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'API request failed');
+      }
+
+      const data = await response.json();
       setResult(data);
     } catch (err) {
       setError(err.message);
@@ -59,7 +100,6 @@ export default function Home() {
   const getWaterColor = () => {
     if (!result) return 'bg-blue-200';
     switch (result.cluster) {
-      case -1: return 'bg-gray-400'; // NOISE/OUTLIER
       case 0: return 'bg-red-200';   // HIGH
       case 1: return 'bg-green-200'; // NORMAL
       default: return 'bg-blue-200';
@@ -190,18 +230,14 @@ export default function Home() {
           )}
 
           <h2 className="text-xl font-bold mb-4 text-blue-800">Water Quality Clusters</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 bg-green-100 rounded-lg">
               <h3 className="font-semibold text-green-800">NORMAL (Cluster 1)</h3>
-              <p className="text-sm text-gray-600">Typical water quality with balanced parameters</p>
+              <p className="text-sm text-gray-600">Typical water quality with balanced parameters, characterized by moderate mineral content and acceptable levels of organic compounds.</p>
             </div>
             <div className="p-4 bg-red-100 rounded-lg">
               <h3 className="font-semibold text-red-800">HIGH (Cluster 0)</h3>
-              <p className="text-sm text-gray-600">Higher than normal levels of contaminants</p>
-            </div>
-            <div className="p-4 bg-gray-100 rounded-lg">
-              <h3 className="font-semibold text-gray-800">NOISE/OUTLIER (Cluster -1)</h3>
-              <p className="text-sm text-gray-600">Unusual water quality requiring investigation</p>
+              <p className="text-sm text-gray-600">Higher than normal levels of contaminants, marked by elevated concentrations of dissolved solids, organic carbon, and chloramines.</p>
             </div>
           </div>
         </div>
