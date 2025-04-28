@@ -38,6 +38,10 @@ echo "Running Fuzzy C-Means (fuzzy/fuzzy.py)..."
 (cd fuzzy && python fuzzy.py)
 echo "Fuzzy C-Means finished."
 
+echo "Running HDBSCAN (hdbscan/train.py)..."
+(cd hdbscan && python train.py)
+echo "HDBSCAN finished."
+
 echo "--- All Clustering Runs Completed ---"
 
 echo "--- Starting Comparison ---"
