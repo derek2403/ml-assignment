@@ -1,16 +1,19 @@
 import { useState } from 'react';
 
-// Define parameter ranges here for sliders
+// Define parameter ranges here for sliders - updated to match FCM model inputs
 const paramRanges = {
-  pH: { min: 0, max: 14, step: 0.1 },
-  Hardness: { min: 0, max: 500, step: 1 },
-  Solids: { min: 0, max: 50000, step: 100 },
-  Chloramines: { min: 0, max: 10, step: 0.1 },
-  Sulfate: { min: 0, max: 500, step: 1 },
-  Conductivity: { min: 0, max: 1000, step: 10 },
-  Organic_carbon: { min: 0, max: 30, step: 0.1 },
-  Trihalomethanes: { min: 0, max: 200, step: 1 },
-  Turbidity: { min: 0, max: 10, step: 0.1 }
+  "Max Fecal Coliform": { min: 0, max: 2000, step: 10 },
+  "Min Temperature": { min: 5, max: 25, step: 0.1 },
+  "Max BOD": { min: 0, max: 10, step: 0.1 },
+  "Max Temperature": { min: 15, max: 40, step: 0.1 },
+  "Max Conductivity": { min: 100, max: 1500, step: 10 },
+  "Min Fecal Coliform": { min: 0, max: 1000, step: 10 },
+  "Max Total Coliform": { min: 50, max: 3000, step: 10 },
+  "Min BOD": { min: 0, max: 8, step: 0.1 },
+  "Min Dissolved Oxygen": { min: 1, max: 10, step: 0.1 },
+  "Min Nitrate N + Nitrite N": { min: 0, max: 6, step: 0.1 },
+  "Min pH": { min: 4, max: 9, step: 0.1 },
+  "Max Nitrate N + Nitrite N": { min: 0, max: 12, step: 0.1 }
 };
 
 // Function to get initial default values (e.g., midpoint)
@@ -69,18 +72,17 @@ export default function Home() {
     setIsLoading(true);
 
     try {
-      // Standardize the input data before sending
-      const standardizedData = standardizeInput(formData);
-      console.log('Sending standardized data to API:', standardizedData);
+      // No need to standardize - just send the original values
+      console.log('Sending data to API:', formData);
       
-      // Call our Next.js API route
+      // Call our API
       const response = await fetch('/api/predict', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: JSON.stringify(standardizedData),
+        body: JSON.stringify(formData),
       });
 
       if (!response.ok) {
@@ -98,11 +100,14 @@ export default function Home() {
   };
 
   const getWaterColor = () => {
-    if (!result) return 'bg-blue-200';
+    if (!result) return 'bg-blue-200'; // Default color
+    
+    // Updated to match FCM 3-cluster output
     switch (result.cluster) {
-      case 0: return 'bg-red-200';   // HIGH
-      case 1: return 'bg-green-200'; // NORMAL
-      default: return 'bg-blue-200';
+      case 0: return 'bg-red-200';    // High Contamination (poor)
+      case 1: return 'bg-yellow-200'; // Moderate Contamination
+      case 2: return 'bg-green-200';  // Low Contamination (good)
+      default: return 'bg-blue-200';  // Unknown/default
     }
   };
 
@@ -137,7 +142,7 @@ export default function Home() {
                       onChange={handleChange}
                       required
                       className="mt-1 block w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                      // Style the thumb (optional, browser-specific)
+                      // Style the thumb
                       style={{ 
                         background: `linear-gradient(to right, #60a5fa 0%, #60a5fa ${((value - range.min) / (range.max - range.min)) * 100}%, #e5e7eb ${((value - range.min) / (range.max - range.min)) * 100}%, #e5e7eb 100%)` 
                       }}
@@ -186,6 +191,9 @@ export default function Home() {
                   <div className="text-center text-gray-800">
                     <h2 className="text-2xl font-semibold mb-2">{result.meaning}</h2>
                     <p className="text-gray-600">Cluster: {result.cluster}</p>
+                    {result.certainty && (
+                      <p className="text-gray-600">Certainty: {(result.certainty * 100).toFixed(1)}%</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -216,28 +224,31 @@ export default function Home() {
               </button>
               <h3 className="text-md font-semibold mb-3 text-gray-800">Parameter Explanations:</h3>
               <div className="space-y-2 text-xs text-gray-700 max-h-64 overflow-y-auto pr-2">
-                <p><strong className="font-medium text-gray-900">pH:</strong> Measures the acidity or alkalinity of water (0-14 scale).</p>
-                <p><strong className="font-medium text-gray-900">Hardness:</strong> Amount of dissolved calcium and magnesium, affecting taste and scaling.</p>
-                <p><strong className="font-medium text-gray-900">Solids:</strong> Total dissolved solids (TDS) - minerals, salts, organic matter dissolved in water.</p>
-                <p><strong className="font-medium text-gray-900">Chloramines:</strong> Disinfectant used in water treatment, combination of chlorine and ammonia.</p>
-                <p><strong className="font-medium text-gray-900">Sulfate:</strong> Naturally occurring mineral, high levels can affect taste and have laxative effects.</p>
-                <p><strong className="font-medium text-gray-900">Conductivity:</strong> Ability of water to conduct electricity, indicates dissolved ion concentration.</p>
-                <p><strong className="font-medium text-gray-900">Organic Carbon:</strong> Total amount of carbon in organic compounds, indicates natural or man-made contamination.</p>
-                <p><strong className="font-medium text-gray-900">Trihalomethanes (THMs):</strong> Byproducts formed when chlorine reacts with organic matter during disinfection.</p>
-                <p><strong className="font-medium text-gray-900">Turbidity:</strong> Cloudiness or haziness of water caused by suspended particles.</p>
+                <p><strong className="font-medium text-gray-900">Max/Min Fecal Coliform:</strong> Bacteria indicating fecal contamination, measured in MPN/100mL.</p>
+                <p><strong className="font-medium text-gray-900">Min/Max Temperature:</strong> Water temperature range, affects dissolved oxygen and microbial activity.</p>
+                <p><strong className="font-medium text-gray-900">Min/Max BOD:</strong> Biochemical Oxygen Demand, measures organic pollution levels.</p>
+                <p><strong className="font-medium text-gray-900">Max Conductivity:</strong> Ability of water to conduct electricity, indicates dissolved mineral content.</p>
+                <p><strong className="font-medium text-gray-900">Max Total Coliform:</strong> Group of bacteria indicating potential contamination.</p>
+                <p><strong className="font-medium text-gray-900">Min Dissolved Oxygen:</strong> Oxygen content in water, essential for aquatic life.</p>
+                <p><strong className="font-medium text-gray-900">Min/Max Nitrate N + Nitrite N:</strong> Nitrogen compounds indicating agricultural runoff or sewage.</p>
+                <p><strong className="font-medium text-gray-900">Min pH:</strong> Acidity or alkalinity of water, affects aquatic life and chemical reactions.</p>
               </div>
             </div>
           )}
 
           <h2 className="text-xl font-bold mb-4 text-blue-800">Water Quality Clusters</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 bg-green-100 rounded-lg">
-              <h3 className="font-semibold text-green-800">NORMAL (Cluster 1)</h3>
-              <p className="text-sm text-gray-600">Typical water quality with balanced parameters, characterized by moderate mineral content and acceptable levels of organic compounds.</p>
+              <h3 className="font-semibold text-green-800">LOW CONTAMINATION (Cluster 2)</h3>
+              <p className="text-sm text-gray-600">Good water quality with low contaminant levels, high dissolved oxygen, and balanced pH. Typically meets drinking water standards.</p>
+            </div>
+            <div className="p-4 bg-yellow-100 rounded-lg">
+              <h3 className="font-semibold text-yellow-800">MODERATE CONTAMINATION (Cluster 1)</h3>
+              <p className="text-sm text-gray-600">Acceptable water quality with moderate contaminant levels. May require standard treatment before human consumption.</p>
             </div>
             <div className="p-4 bg-red-100 rounded-lg">
-              <h3 className="font-semibold text-red-800">HIGH (Cluster 0)</h3>
-              <p className="text-sm text-gray-600">Higher than normal levels of contaminants, marked by elevated concentrations of dissolved solids, organic carbon, and chloramines.</p>
+              <h3 className="font-semibold text-red-800">HIGH CONTAMINATION (Cluster 0)</h3>
+              <p className="text-sm text-gray-600">Poor water quality with elevated levels of contaminants, low dissolved oxygen, and potentially extreme pH values. Requires extensive treatment.</p>
             </div>
           </div>
         </div>

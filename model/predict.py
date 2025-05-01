@@ -3,141 +3,106 @@ import numpy as np
 import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 import os
+import skfuzzy as fuzz
+from sklearn.decomposition import PCA
 
 app = Flask(__name__)
 CORS(app)
 
-model = None
-X_train = None
-X_train_scaled = None
-column_order = [
-    'pH', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
-    'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity'
+fcm_model = None
+pca_model = None
+scaler = None
+# Input parameters
+required_columns = [
+    'Max Fecal Coliform', 'Min Temperature', 'Max BOD', 'Max Temperature', 
+    'Max Conductivity', 'Min Fecal Coliform', 'Max Total Coliform', 
+    'Min BOD', 'Min Dissolved Oxygen', 'Min Nitrate N + Nitrite N', 
+    'Min pH', 'Max Nitrate N + Nitrite N'
 ]
 
 def load_model():
-    global model, X_train, X_train_scaled
-    print("Loading DBSCAN model and data...")
+    global fcm_model, pca_model, scaler
+    print("Loading Fuzzy C-Means model and data...")
     try:
-        model = joblib.load('dbscan.joblib')
-        print("- DBSCAN model loaded.")
-
-        if os.path.exists('hdbscan.joblib'):
-            print("- HDBSCAN model found (will be used as fallback 1)")
-        else:
-            print("- Warning: HDBSCAN model not found at 'hdbscan.joblib'")
-            
-        if os.path.exists('kmeans.joblib'):
-            print("- K-Means model found (will be used as fallback 2)")
-        else:
-            print("- Warning: K-Means model not found at 'kmeans.joblib'")
-
-        X_train = pd.read_csv('data.csv')
+        # Load FCM model
+        fcm_model = joblib.load('fuzzy_model_results_k3.joblib')
+        print("- FCM model loaded.")
         
-        if 'Potability' in X_train.columns:
-            X_train = X_train.drop('Potability', axis=1)
-            print("- Dropped Potability column from training data.")
+        # Load the training data for PCA and scaling reference
+        final_df = pd.read_csv('final.csv')
+        print(f"- Training data loaded with shape: {final_df.shape}")
         
+        # Extract original features
+        orig_cols = [col for col in final_df.columns if 'orig_' in col or 
+                     col in ['Temperature_Range', 'Min Nitrate N + Nitrite N', 'Max Nitrate N + Nitrite N', 'STN_Code', 'Water_Body_Type']]
+        
+        # Extract PCA components
+        pca_cols = [col for col in final_df.columns if col.startswith('PC') and col[2:].isdigit()]
+        print(f"- Found {len(pca_cols)} PCA components")
+        
+        # Create a basic dataset of original features (removing 'orig_' prefix)
+        cleaned_orig_cols = [col.replace('orig_', '') for col in orig_cols if not col in ['STN_Code', 'Water_Body_Type']]
+        
+        # Create scaler for original features
+        orig_features = final_df[[col for col in orig_cols if not col in ['STN_Code', 'Water_Body_Type']]]
         scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        print("- Training data loaded and scaled.")
+        scaler.fit(orig_features)
+        print("- Scaler fitted to original features.")
         
-        if len(model.labels_) != len(X_train):
-             print(f"Warning: Mismatch between DBSCAN model labels ({len(model.labels_)}) and training data rows ({len(X_train)}). Ensure model was trained on this data.")
-             
-
-        print("\nDBSCAN Model Parameters:")
-        print(f"eps (epsilon): {model.eps}")
-        print(f"min_samples: {model.min_samples}")
+        # Fit a PCA model to transform from original features to PCA space
+        # First, scale the original features
+        X_orig_scaled = scaler.transform(orig_features)
+        pca_model = PCA(n_components=len(pca_cols))
+        pca_model.fit(X_orig_scaled)
+        print(f"- PCA model fitted with {len(pca_cols)} components.")
+        
+        # Print FCM model info
+        print("\nFuzzy C-Means Model Parameters:")
+        print(f"Number of clusters: {fcm_model['n_clusters']}")
+        print(f"Fuzziness parameter (m): {fcm_model['fuzziness_m']}")
+        print(f"FPC (model quality): {fcm_model['fpc']:.4f}")
 
     except FileNotFoundError as e:
-        print(f"Error loading file: {e}. Make sure dbscan.joblib and data.csv are present.")
+        print(f"Error loading file: {e}. Make sure model files and final.csv are present.")
         exit(1)
     except Exception as e:
         print(f"An error occurred during model loading: {e}")
+        import traceback
+        traceback.print_exc()
         exit(1)
 
-def predict_cluster_dbscan(X_new):
-    if X_train_scaled is None:
-        raise RuntimeError("Scaled training data (X_train_scaled) not loaded.")
-        
-    nbrs = NearestNeighbors(n_neighbors=model.min_samples, radius=model.eps)
-    nbrs.fit(X_train_scaled)
+def predict_cluster_fcm(X_pca_scaled):
+    """Predict cluster using FCM model"""
+    if fcm_model is None:
+        raise RuntimeError("FCM model not loaded.")
     
-    distances, indices = nbrs.radius_neighbors(X_new)
+    # Get the FCM centers from the model
+    centers = fcm_model['centers']
     
-    print(f"Number of neighbors found within eps radius: {len(indices[0])}")
+    # Transpose for skfuzzy format (features x samples)
+    X_pca_t = X_pca_scaled.T
     
-    if len(distances[0]) == 0:
-        print("No neighbors found within eps radius.")
-        return -1
-        
-    try:
-        neighbor_labels = model.labels_[indices[0]]
-        print(f"Neighbor labels: {neighbor_labels}")
-    except IndexError:
-        print(f"Error: Indices {indices[0]} out of bounds for model labels (length {len(model.labels_)}).")
-        return -1
-        
-    if all(label == -1 for label in neighbor_labels):
-        print("All neighbors are noise points.")
-        return -1
-        
-    non_noise_labels = [label for label in neighbor_labels if label != -1]
-    if non_noise_labels:
-        most_common_label = max(set(non_noise_labels), key=non_noise_labels.count)
-        print(f"Found non-noise neighbors with labels: {non_noise_labels}. Most common: {most_common_label}")
-        return most_common_label
-        
-    print("Found neighbors, but only noise labels.")
-    return -1
-
-def predict_cluster_ensemble(X_new):
-    print("\nStarting ensemble prediction cascade...")
-    dbscan_cluster = predict_cluster_dbscan(X_new)
+    print(f"Centers shape: {centers.shape}")
+    print(f"Input data shape: {X_pca_t.shape}")
     
-    if dbscan_cluster != -1:
-        print("Using DBSCAN classification.")
-        return dbscan_cluster, "DBSCAN"
+    # Calculate membership using FCM formula
+    u, _, _, _, _, _ = fuzz.cluster.cmeans_predict(
+        X_pca_t, centers, fcm_model['fuzziness_m'],
+        error=0.005, maxiter=1000
+    )
     
-    print("DBSCAN returned noise (-1), trying HDBSCAN...")
-    try:
-        hdbscan_model = joblib.load('hdbscan.joblib')
-        
-        nbrs = NearestNeighbors(n_neighbors=5)
-        nbrs.fit(X_train_scaled)
-        distances, indices = nbrs.kneighbors(X_new)
-        
-        neighbor_labels = hdbscan_model.labels_[indices[0]]
-        print(f"HDBSCAN nearest neighbor labels: {neighbor_labels}")
-        
-        non_noise_labels = [label for label in neighbor_labels if label != -1]
-        
-        if non_noise_labels:
-            hdbscan_cluster = max(set(non_noise_labels), key=non_noise_labels.count)
-            print(f"HDBSCAN assigned to cluster {hdbscan_cluster}")
-            return hdbscan_cluster, "HDBSCAN (fallback)"
-            
-        print("HDBSCAN also returned noise for all nearest neighbors.")
-            
-    except FileNotFoundError:
-        print("HDBSCAN model not found, skipping to K-Means.")
-    except Exception as e:
-        print(f"Error using HDBSCAN: {e}")
+    # Get membership values for the sample
+    memberships = u[:, 0]
     
-    print("Trying final fallback: K-Means...")
-    try:
-        kmeans_model = joblib.load('kmeans.joblib')
-        kmeans_cluster = kmeans_model.predict(X_new)[0]
-        print(f"K-Means fallback classified as cluster {kmeans_cluster}")
-        return kmeans_cluster, "K-Means (fallback)"
-    except Exception as e:
-        print(f"K-Means fallback error: {e}")
-        print("All ensemble models failed. Returning DBSCAN noise classification as last resort.")
-        return -1, "DBSCAN (noise - all fallbacks failed)"
+    # Get the cluster with highest membership
+    hard_label = np.argmax(memberships)
+    
+    print(f"FCM memberships: {memberships}")
+    print(f"Assigned to cluster {hard_label} with membership value: {memberships[hard_label]:.4f}")
+    
+    return hard_label, memberships
 
 @app.route('/predict', methods=['POST', 'OPTIONS'])	
 def predict():
@@ -145,61 +110,108 @@ def predict():
         return '', 200
 
     try:
-        scaled_data = request.get_json()
-        print(f"Received scaled data: {scaled_data}")
+        input_data = request.get_json()
+        print(f"Received input data: {input_data}")
 
-        expected_params = column_order
-        
-        missing_params = [param for param in expected_params if param not in scaled_data]
+        # Validate required input parameters
+        missing_params = [param for param in required_columns if param not in input_data]
         if missing_params:
-             print(f"Validation Error: Missing parameters {missing_params}")
-             return jsonify({
-                 "error": "Missing parameters",
-                 "missing": missing_params
-             }), 400
+            print(f"Validation Error: Missing parameters {missing_params}")
+            return jsonify({
+                "error": "Missing parameters",
+                "missing": missing_params
+            }), 400
+        
+        # Create complete input data with calculated Temperature_Range
+        complete_input_data = input_data.copy()
+        
+        # Calculate Temperature_Range from Max and Min Temperature
+        try:
+            max_temp = float(input_data['Max Temperature'])
+            min_temp = float(input_data['Min Temperature'])
+            temp_range = max_temp - min_temp
             
-        input_list = []
-        for col in column_order:
-             try:
-                 value = float(scaled_data[col])
-                 input_list.append(value)
-             except (TypeError, ValueError):
-                 print(f"Validation Error: Non-numeric value received for {col}: {scaled_data[col]}")
-                 return jsonify({
-                     "error": "Invalid parameter value",
-                     "message": f"Parameter '{col}' must be a number."
-                 }), 400
-                 
-        X_new = np.array([input_list])
-        print(f"Created NumPy array for prediction: {X_new}")
+            # Add the calculated Temperature_Range to the input data
+            complete_input_data['Temperature_Range'] = temp_range
+            print(f"Calculated Temperature_Range: {temp_range}")
+        except (TypeError, ValueError) as e:
+            print(f"Error calculating Temperature_Range: {e}")
+            return jsonify({
+                "error": "Invalid temperature values",
+                "message": "Could not calculate Temperature_Range from provided temperature values."
+            }), 400
+        
+        # Create input list in the correct order for original features
+        features_list = []
+        
+        # Get all original feature columns (match keys in complete_input_data to columns used when training)
+        feature_keys = ['Max Fecal Coliform', 'Min Temperature', 'Max BOD', 'Max Temperature', 
+                        'Max Conductivity', 'Temperature_Range', 'Min Fecal Coliform', 
+                        'Max Total Coliform', 'Min BOD', 'Min Dissolved Oxygen', 
+                        'Min Nitrate N + Nitrite N', 'Min pH', 'Max Nitrate N + Nitrite N']
+        
+        for key in feature_keys:
+            try:
+                value = float(complete_input_data[key])
+                features_list.append(value)
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"Error with feature {key}: {e}")
+                return jsonify({
+                    "error": f"Problem with feature {key}",
+                    "message": str(e)
+                }), 400
+        
+        # Convert to numpy array
+        features_array = np.array([features_list])
+        print(f"Original features array shape: {features_array.shape}")
+        
+        # Scale the features
+        features_scaled = scaler.transform(features_array)
+        print(f"Scaled features: {features_scaled}")
+        
+        # Transform to PCA space
+        features_pca = pca_model.transform(features_scaled)
+        print(f"PCA transformed features shape: {features_pca.shape}")
+        
+        # Predict using FCM
+        cluster, memberships = predict_cluster_fcm(features_pca)
 
-        cluster, prediction_method = predict_cluster_ensemble(X_new)
-
+        # Define correct meanings for the clusters
         cluster_meanings = {
-            -1: "NOISE/OUTLIER - Unusual water quality",
-            0: "HIGH - Higher than normal levels",
-            1: "NORMAL - Typical water quality"
+            0: "High Contamination - Poor water quality",
+            1: "Moderate Contamination - Acceptable water quality",
+            2: "Low Contamination - Good water quality"
         }
+            
+        meaning = cluster_meanings.get(cluster, "Unknown cluster type")
 
-        if cluster not in cluster_meanings:
-             print(f"Warning: DBSCAN logic produced unexpected cluster label: {cluster}. Defaulting to outlier.")
-             cluster = -1 
-             
-        meaning = cluster_meanings[cluster]
+        # Calculate certainty based on the highest membership value
+        certainty = float(memberships[cluster])
 
         print("\n=== Prediction Log ===")
-        print(f"Prediction Method: {prediction_method}")
-        print("\nScaled Input Values (received from frontend):")
-        for key, value in scaled_data.items():
+        print("Prediction Method: Fuzzy C-Means")
+        print("\nInput Values:")
+        for key, value in input_data.items():
             print(f"{key}: {value}")
+        print(f"Temperature_Range (calculated): {temp_range}")
 
         print(f"\nPredicted Cluster: {cluster} ({meaning})")
+        print(f"Certainty: {certainty:.4f}")
         print("===================\n")
+
+        # Include both original inputs and derived features in response
+        response_data = input_data.copy()
+        response_data['Temperature_Range'] = temp_range
 
         return jsonify({
             "cluster": int(cluster),
             "meaning": meaning,
-            "input_values": scaled_data
+            "certainty": certainty,
+            "memberships": memberships.tolist(),
+            "input_values": response_data,
+            "calculated_values": {
+                "Temperature_Range": temp_range
+            }
         })
 
     except Exception as e:

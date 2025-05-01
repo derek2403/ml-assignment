@@ -1,43 +1,90 @@
-
+# Path: som/som.py
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch 
-import seaborn as sns
-from sklearn.preprocessing import StandardScaler 
-from sklearn.decomposition import PCA
+from matplotlib.patches import Patch
+# import seaborn as sns # Keep removed
+# from sklearn.preprocessing import StandardScaler # REMOVED - Input is PCA data
+# from sklearn.decomposition import PCA # REMOVED - Input is PCA data, only used for visualization
 from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans 
+from sklearn.cluster import KMeans
 from minisom import MiniSom
 import joblib
 import os
 import math
 import warnings
+from mpl_toolkits.mplot3d import Axes3D # For 3D plot
 
+# === Configuration ===
+# Input data file - updated to final.csv
+INPUT_DATA_FILE = '../final.csv'
+# Original unprocessed data file (needed for merging final results)
+ORIGINAL_UNPROCESSED_DATA_FILE = '../../dataset.csv' # Adjust path if needed
 
+OUTPUT_DIR = '.' # Output in the current directory
+PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
+CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'som_clustered_data_{suffix}.csv')
+SOM_MODEL_FILE = os.path.join(OUTPUT_DIR, 'som_model.joblib')
+MAX_K_NODES = 10 # Max clusters for SOM nodes
+RANDOM_STATE = 42
+SOM_ITERATIONS = 10000 # Keep as example, might need tuning
+SOM_GRID_SIZE = None # Auto-calculate based on data size
 
-def load_data(file_path='../data.csv'):
-    """Load the scaled dataset."""
-    print(f"Loading data from {file_path}...")
-    df = pd.read_csv(file_path)
-    print(f"Data loaded with shape: {df.shape}")
-    # Separate features and target (if Potability exists)
-    if 'Potability' in df.columns:
-        print("'Potability' column found.")
-        y = df['Potability'].astype(int)
-        X = df.drop('Potability', axis=1)
-    else:
-        print("'Potability' column not found.")
-        X = df
-        y = None
-    return X, y, df # Return original df too
+warnings.filterwarnings('ignore') # Suppress warnings
 
-def train_som(X_scaled, grid_size=None, sigma=1.5, learning_rate=0.5, num_iterations=5000, random_seed=42):
-    """Initialize and train the Self-Organizing Map."""
-    print("\n--- Training Self-Organizing Map --- ")
-    n_features = X_scaled.shape[1]
-    n_samples = X_scaled.shape[0]
-    
+# === Helper Functions ===
+
+def load_pca_data(file_path):
+    """Load the PCA data."""
+    print(f"Loading PCA data from {file_path}...")
+    try:
+        df = pd.read_csv(file_path)
+        print(f"Data loaded with shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()[:10]}...")
+        
+        # Extract only the PCA components for clustering
+        pca_cols = [col for col in df.columns if col.startswith('PC') and col[2:].isdigit()]
+        print(f"Using PCA columns: {pca_cols}")
+        X = df[pca_cols]
+        
+        # Also return the full dataframe for later reference
+        return X, df
+    except FileNotFoundError:
+        print(f"Error: Input data file not found at {file_path}")
+        return None, None
+    except Exception as e:
+        print(f"Error loading PCA data: {e}")
+        return None, None
+
+def load_original_data_for_reference(file_path):
+    """Loads original data just to get reference columns like ID, Name etc."""
+    print(f"Loading original (unprocessed) data for reference from {file_path}...")
+    try:
+        # Use latin1 encoding as determined before
+        df_orig = pd.read_csv(file_path, encoding='latin1')
+        # Clean column names for consistency
+        df_orig.columns = df_orig.columns.str.replace('\n', '', regex=False).str.replace('?', '', regex=False).str.strip()
+        df_orig = df_orig.rename(columns={'STNCode': 'STN_Code'}) # Rename ID column if needed
+        print(f"Original reference data loaded with shape: {df_orig.shape}")
+        # Keep only identifier/reference columns
+        ref_cols = ['STN_Code', 'Name of Monitoring Location', 'Type Water Body', 'State Name'] # Adjust if needed
+        # Filter out columns that don't exist in the original file
+        ref_cols_exist = [col for col in ref_cols if col in df_orig.columns]
+        return df_orig[ref_cols_exist]
+    except FileNotFoundError:
+        print(f"Error: Original data file not found at {file_path}")
+        print("Cannot add reference info to clustered output.")
+        return None
+    except Exception as e:
+        print(f"Error loading original data: {e}")
+        return None
+
+def train_som(X_pca_values, grid_size=None, sigma=1.5, learning_rate=0.5, num_iterations=5000, random_seed=42):
+    """Initialize and train the Self-Organizing Map on PCA data."""
+    print("\n--- Training Self-Organizing Map (on PCA data) --- ")
+    n_features = X_pca_values.shape[1] # Number of PCA components
+    n_samples = X_pca_values.shape[0]
+
     # Determine grid size (heuristic: 5 * sqrt(N)) if not provided
     if grid_size is None:
         map_size = math.ceil(5 * math.sqrt(n_samples))
@@ -50,20 +97,22 @@ def train_som(X_scaled, grid_size=None, sigma=1.5, learning_rate=0.5, num_iterat
         print(f"Using provided grid size: {grid_size}")
 
     som = MiniSom(map_rows, map_cols, n_features,
-                sigma=sigma, learning_rate=learning_rate, 
+                sigma=sigma, learning_rate=learning_rate,
                 neighborhood_function='gaussian', random_seed=random_seed)
 
     print(f"Initializing SOM weights...")
-    som.pca_weights_init(X_scaled) # Initialize weights using PCA
+    # Note: PCA init is still relevant even if input is already PCA,
+    # it uses PCA on the input (PCA data) to initialize weights.
+    som.pca_weights_init(X_pca_values)
     print(f"Training SOM for {num_iterations} iterations...")
-    som.train_batch(X_scaled, num_iterations, verbose=True) # Use train_batch for efficiency
-    # som.train_random(X_scaled, num_iterations, verbose=True)
+    som.train_batch(X_pca_values, num_iterations, verbose=True) # Use train_batch for efficiency
     print("SOM training completed.")
     return som
 
-def plot_som_distance_map(som, plot_dir='som/plots'):
+def plot_som_distance_map(som, plot_dir='plots'):
     """Plot the SOM's distance map (U-Matrix)."""
     print("\n--- Plotting SOM Distance Map (U-Matrix) --- ")
+    os.makedirs(plot_dir, exist_ok=True) # Ensure plot dir exists
     distance_map = som.distance_map()
     plt.figure(figsize=(10, 10))
     plt.pcolor(distance_map.T, cmap='bone_r') # plotting the distance map as background
@@ -83,7 +132,7 @@ def find_optimal_k_for_nodes(som_weights, max_k=10, random_state=42):
     print("\n--- Finding optimal k for clustering SOM nodes ---")
     silhouette_scores = []
     k_range = range(2, max_k + 1)
-    
+
     # Reshape weights for clustering (each node is a sample)
     num_nodes = som_weights.shape[0] * som_weights.shape[1]
     node_vectors = som_weights.reshape(num_nodes, -1)
@@ -99,12 +148,12 @@ def find_optimal_k_for_nodes(som_weights, max_k=10, random_state=42):
         else:
             print("  Only one cluster found for nodes, score not applicable.")
             silhouette_scores.append(np.nan)
-            
+
     valid_scores = [(k, score) for k, score in zip(k_range, silhouette_scores) if not np.isnan(score)]
     if not valid_scores:
         print("Error: Could not calculate silhouette scores for any k on nodes.")
         return 2 # Default fallback
-    
+
     valid_k_range, valid_silhouette_scores = zip(*valid_scores)
     optimal_k = valid_k_range[np.argmax(valid_silhouette_scores)]
     print(f"Optimal k for SOM node clustering based on Silhouette Score: {optimal_k}")
@@ -115,155 +164,208 @@ def cluster_som_nodes(som_weights, k, random_state=42):
     print(f"\n--- Clustering SOM Nodes into {k} clusters --- ")
     num_nodes = som_weights.shape[0] * som_weights.shape[1]
     node_vectors = som_weights.reshape(num_nodes, -1)
-    
+
     kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
     node_labels = kmeans.fit_predict(node_vectors)
     print("Node clustering completed.")
     return node_labels.reshape(som_weights.shape[0], som_weights.shape[1]) # Reshape back to grid
 
-def plot_som_node_clusters(som, node_cluster_labels, plot_dir='som/plots'):
+def plot_som_node_clusters(som, node_cluster_labels, plot_dir='plots', suffix=''):
     """Visualize the clustered SOM nodes on the grid."""
-    print("\n--- Plotting SOM Node Clusters Map --- ")
+    print(f"\n--- Plotting SOM Node Clusters Map ({suffix}) --- ")
+    os.makedirs(plot_dir, exist_ok=True)
     plt.figure(figsize=(10, 10))
     num_clusters = len(np.unique(node_cluster_labels))
-    colors = plt.cm.viridis(np.linspace(0, 1, num_clusters))
     
-    plt.pcolor(node_cluster_labels.T, cmap=plt.cm.get_cmap('viridis', num_clusters))
-    plt.colorbar(ticks=range(num_clusters), label='Node Cluster ID')
-    
-    
+    plt.pcolor(node_cluster_labels.T, cmap=plt.cm.get_cmap('viridis', max(1, num_clusters)))
+    plt.colorbar(ticks=range(max(1, num_clusters)), label='Node Cluster ID')
+
     plt.title(f'SOM Grid Colored by Node Cluster (k={num_clusters})')
     plt.xticks(np.arange(som.get_weights().shape[0] + 1))
     plt.yticks(np.arange(som.get_weights().shape[1] + 1))
     plt.grid(True)
     plt.tight_layout()
-    node_clusters_path = os.path.join(plot_dir, f'som_node_clusters_k{num_clusters}.png')
+    node_clusters_path = os.path.join(plot_dir, f'som_node_clusters_{suffix}.png')
     plt.savefig(node_clusters_path)
     plt.close()
     print(f"SOM Node Clusters plot saved to {node_clusters_path}")
 
-def get_data_point_labels(som, X_scaled, node_cluster_labels):
+def get_data_point_labels(som, X_pca_values, node_cluster_labels):
     """Assign cluster labels to data points based on their BMU's cluster."""
     print("\n--- Assigning cluster labels to data points --- ")
-    data_labels = np.zeros(len(X_scaled), dtype=int)
-    for i, x in enumerate(X_scaled):
+    data_labels = np.zeros(len(X_pca_values), dtype=int)
+    for i, x in enumerate(X_pca_values):
         bmu_row, bmu_col = som.winner(x) # Find Best Matching Unit
         data_labels[i] = node_cluster_labels[bmu_row, bmu_col]
     print("Data point labels assigned.")
     return data_labels
 
-def visualize_clusters_pca(X, labels, y, plot_dir='som/plots', algorithm_name='SOM', k=None, random_state=42):
-    """Visualize the final data clusters using PCA."""
-    print("\n--- Visualizing Final Data Clusters using PCA --- ")
-    pca = PCA(n_components=2, random_state=random_state)
-    X_pca = pca.fit_transform(X)
-
-    plt.figure(figsize=(12, 8))
+def visualize_clusters(X, labels, plot_dir='plots', filename_suffix='', algorithm_name='SOM', k=None):
+    """Visualize the clusters with matched style to reference plots."""
+    print(f"\n--- Visualizing Clusters ({filename_suffix}) ---")
     
+    # Create figure with the same square dimensions as the reference plot
+    plt.figure(figsize=(14, 12))
+    
+    # Extract the first two PCA components for plotting
+    X_values = X.values if isinstance(X, pd.DataFrame) else X
+    X_plot = X_values[:, :2]  # First two components
+    
+    # Get unique cluster labels
     unique_labels = np.unique(labels)
     if k is None:
-        k = len(unique_labels) # Infer k if not provided
+        k = len(unique_labels)
+    
+    # Create color map using viridis (same as reference)
     colors = plt.cm.viridis(np.linspace(0, 1, k))
-
-    # Plot data points with cluster colors
-    for cluster_label, color in zip(unique_labels, colors):
-        cluster_points = X_pca[labels == cluster_label]
-        plt.scatter(cluster_points[:, 0], cluster_points[:, 1], s=50, c=[color],
-                    label=f'Cluster {cluster_label}', alpha=0.6)
-
-    plt.title(f'{algorithm_name} Clustering Results (k={k}, PCA Reduced)')
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-    plt.legend()
-    plt.grid(True)
-    pca_plot_path = os.path.join(plot_dir, f'som_data_clusters_pca_k{k}.png')
-    plt.savefig(pca_plot_path)
+    
+    # Main scatter plot with larger points (s=150 like in reference)
+    scatter = plt.scatter(X_plot[:, 0], X_plot[:, 1], 
+                         c=labels, 
+                         cmap='viridis',
+                         s=150,  # Matched to reference
+                         alpha=0.7,  # Same alpha as reference
+                         edgecolor='w',  # White edge for better visibility
+                         linewidth=0.5)
+    
+    # Add title and labels
+    plt.title(f'{algorithm_name} Clustering (k={k})', fontsize=14)
+    plt.xlabel('Principal Component 1', fontsize=12)
+    plt.ylabel('Principal Component 2', fontsize=12)
+    
+    # Add grid with the same style as reference
+    plt.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Set axis limits to match the reference plot
+    plt.xlim(-4.5, 6.5)
+    plt.ylim(-4.5, 4.5)
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, label='Cluster')
+    cbar.ax.tick_params(labelsize=10)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(plot_dir, f'som_clusters_{filename_suffix}.png')
+    try:
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"Cluster plot saved to {plot_path}")
+    except Exception as e:
+        print(f"Error saving visualization plot: {e}")
     plt.close()
-    print(f"Data Cluster PCA plot saved to {pca_plot_path}")
-
-    # --- Optional: Visualize with original Potability labels if available ---
-    if y is not None:
-        plt.figure(figsize=(12, 8))
-        scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='coolwarm', alpha=0.6, s=50)
-        plt.title('PCA Reduced Data Colored by Original Potability')
-        plt.xlabel('Principal Component 1')
-        plt.ylabel('Principal Component 2')
-        handles, _ = scatter.legend_elements(prop="colors", alpha=0.6)
-        legend_labels = [f'Potability {label}' for label in np.unique(y)]
-        plt.legend(handles, legend_labels, title="Original Labels")
-        plt.grid(True)
-        pca_potability_plot_path = os.path.join(plot_dir, 'pca_colored_by_potability.png') # Overwrite is fine
-        plt.savefig(pca_potability_plot_path)
-        plt.close()
-        print(f"PCA plot colored by Potability saved to {pca_potability_plot_path}")
 
 def main():
-    # --- Configuration ---
-    DATA_FILE = '../data.csv'
-    OUTPUT_DIR = '.'
-    PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
-    CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'som_clustered_data_k{k}.csv')
-    SOM_MODEL_FILE = os.path.join(OUTPUT_DIR, 'som_model.joblib') # Changed extension
-    MAX_K_NODES = 10 # Max clusters for SOM nodes
-    RANDOM_STATE = 42
-    SOM_ITERATIONS = 10000 
-    SOM_GRID_SIZE = None
-
     # --- Ensure output directories exist ---
     os.makedirs(PLOT_DIR, exist_ok=True)
 
-    # --- Load Data ---
-    X, y, df_original_with_target = load_data(DATA_FILE)
+    # --- Load PCA Data ---
+    X_pca_df, full_df = load_pca_data(INPUT_DATA_FILE)
+    if X_pca_df is None:
+        return # Exit if data loading failed
+    
+    X_pca_values = X_pca_df.values
 
-    # --- Ensure data is scaled ---
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    print("Data scaling confirmed/re-applied.")
+    # --- Load Original Data for Reference ---
+    df_original_ref = load_original_data_for_reference(ORIGINAL_UNPROCESSED_DATA_FILE)
+
+    # --- Scaling REMOVED ---
+    # scaler = StandardScaler()
+    # X_scaled = scaler.fit_transform(X) # Not needed, input is PCA data
+    # print("Data scaling confirmed/re-applied.")
 
     # --- Train SOM ---
-    som = train_som(X_scaled, grid_size=SOM_GRID_SIZE, num_iterations=SOM_ITERATIONS, random_seed=RANDOM_STATE)
+    # Pass PCA numpy array
+    som = train_som(X_pca_values, grid_size=SOM_GRID_SIZE, num_iterations=SOM_ITERATIONS, random_seed=RANDOM_STATE)
 
     # --- Visualize SOM U-Matrix ---
     plot_som_distance_map(som, plot_dir=PLOT_DIR)
 
-    # --- Cluster SOM Nodes ---
-    som_weights = som.get_weights()
-    optimal_k_nodes = find_optimal_k_for_nodes(som_weights, max_k=MAX_K_NODES, random_state=RANDOM_STATE)
-    node_cluster_labels = cluster_som_nodes(som_weights, k=optimal_k_nodes, random_state=RANDOM_STATE)
-    plot_som_node_clusters(som, node_cluster_labels, plot_dir=PLOT_DIR)
-
-    # --- Assign Labels to Data Points ---
-    data_labels = get_data_point_labels(som, X_scaled, node_cluster_labels)
-
-    # --- Evaluate Final Data Clustering ---
-    silhouette_avg = np.nan
-    if len(set(data_labels)) > 1:
-        try:
-            silhouette_avg = silhouette_score(X_scaled, data_labels)
-            print(f"\nFinal Data Point Clustering Evaluation:")
-            print(f"  Average Silhouette Score: {silhouette_avg:.4f}")
-        except Exception as e:
-             print(f"Error calculating final silhouette score: {e}")
-    else:
-         print("\nOnly one cluster assigned to data points. Silhouette score not applicable.")
-
     # --- Save SOM Model ---
-    joblib.dump(som, SOM_MODEL_FILE) # Use joblib or pickle
-    print(f"\nSOM model saved to {SOM_MODEL_FILE}")
+    try:
+        joblib.dump(som, SOM_MODEL_FILE) # Use joblib or pickle
+        print(f"\nSOM model saved to {SOM_MODEL_FILE}")
+    except Exception as e:
+        print(f"Error saving SOM model: {e}")
 
-    # --- Add Cluster Labels to Original Data ---
-    df_clustered = df_original_with_target.loc[X.index].copy()
-    df_clustered['Cluster'] = data_labels
-    # clustered_data_file = CLUSTERED_DATA_FILE_TEMPLATE.format(k=optimal_k_nodes)
-    # df_clustered.to_csv(clustered_data_file, index=False)
-    # print(f"Clustered data (k={optimal_k_nodes}) saved to {clustered_data_file}")
-    print(f"\nCluster labels generated for k={optimal_k_nodes} (not saving clustered data file).")
+    # --- STEP 1: Cluster SOM Nodes with fixed k=3 ---
+    fixed_k = 3
+    print(f"\n=== Clustering SOM Nodes with fixed k={fixed_k} ===")
+    som_weights = som.get_weights()
+    node_cluster_labels_k3 = cluster_som_nodes(som_weights, k=fixed_k, random_state=RANDOM_STATE)
+    
+    # Visualize k=3 node clustering
+    plot_som_node_clusters(som, node_cluster_labels_k3, plot_dir=PLOT_DIR, suffix=f"k{fixed_k}")
+    
+    # Assign k=3 data labels
+    data_labels_k3 = get_data_point_labels(som, X_pca_values, node_cluster_labels_k3)
+    
+    # Evaluate k=3 clustering
+    if len(set(data_labels_k3)) > 1:
+        try:
+            silhouette_avg_k3 = silhouette_score(X_pca_values, data_labels_k3)
+            print(f"K=3 Data Point Clustering Silhouette Score: {silhouette_avg_k3:.4f}")
+        except Exception as e:
+            print(f"Error calculating silhouette score for k=3: {e}")
+    
+    # Visualize k=3 data clusters
+    visualize_clusters(X_pca_df, data_labels_k3, plot_dir=PLOT_DIR, 
+                      filename_suffix=f"k{fixed_k}", k=fixed_k)
+    
+    # Save k=3 clustered data
+    k3_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(suffix=f"k{fixed_k}")
+    df_k3_output = full_df.copy()
+    df_k3_output['Cluster_SOM'] = data_labels_k3
+    try:
+        df_k3_output.to_csv(k3_output_file, index=False)
+        print(f"Clustered data for k={fixed_k} saved to {k3_output_file}")
+    except Exception as e:
+        print(f"Error saving clustered data for k={fixed_k}: {e}")
 
-    # --- Visualize Final Data Clusters ---
-    visualize_clusters_pca(X_scaled, data_labels, y, plot_dir=PLOT_DIR, k=optimal_k_nodes, random_state=RANDOM_STATE)
+    # --- STEP 2: Find Optimal Number of Clusters for SOM Nodes ---
+    print("\n=== Finding Optimal Number of Clusters for SOM Nodes ===")
+    optimal_k = find_optimal_k_for_nodes(som_weights, max_k=MAX_K_NODES, random_state=RANDOM_STATE)
+
+    # Skip this step if optimal_k is the same as fixed_k
+    if optimal_k == fixed_k:
+        print(f"Optimal number of clusters ({optimal_k}) is the same as fixed k ({fixed_k}). Skipping duplicate clustering.")
+    else:
+        # --- STEP 3: Cluster SOM Nodes with Optimal k ---
+        print(f"\n=== Clustering SOM Nodes with optimal k={optimal_k} ===")
+        node_cluster_labels_opt = cluster_som_nodes(som_weights, k=optimal_k, random_state=RANDOM_STATE)
+        
+        # Visualize optimal node clustering
+        plot_som_node_clusters(som, node_cluster_labels_opt, plot_dir=PLOT_DIR, suffix=f"optimal_k{optimal_k}")
+        
+        # Assign optimal data labels
+        data_labels_opt = get_data_point_labels(som, X_pca_values, node_cluster_labels_opt)
+        
+        # Evaluate optimal clustering
+        if len(set(data_labels_opt)) > 1:
+            try:
+                silhouette_avg_opt = silhouette_score(X_pca_values, data_labels_opt)
+                print(f"Optimal k={optimal_k} Data Point Clustering Silhouette Score: {silhouette_avg_opt:.4f}")
+            except Exception as e:
+                print(f"Error calculating silhouette score for optimal k={optimal_k}: {e}")
+        
+        # Visualize optimal data clusters
+        visualize_clusters(X_pca_df, data_labels_opt, plot_dir=PLOT_DIR, 
+                          filename_suffix=f"optimal_k{optimal_k}", k=optimal_k)
+        
+        # Save optimal clustered data
+        opt_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(suffix=f"optimal_k{optimal_k}")
+        df_opt_output = full_df.copy()
+        df_opt_output['Cluster_SOM'] = data_labels_opt
+        try:
+            df_opt_output.to_csv(opt_output_file, index=False)
+            print(f"Clustered data for optimal k={optimal_k} saved to {opt_output_file}")
+        except Exception as e:
+            print(f"Error saving clustered data for optimal k={optimal_k}: {e}")
 
     print("\nSOM clustering process completed!")
-
+    print("Summary:")
+    print(f"1. Fixed k={fixed_k} clustering")
+    print(f"2. Optimal k={optimal_k} clustering")
 
 if __name__ == "__main__":
-    main() 
+    main()

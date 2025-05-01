@@ -1,198 +1,285 @@
-
+# Path: gmm/gmm.py
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+# import seaborn as sns # Keep removed
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler # Good practice
-from sklearn.decomposition import PCA
+# from sklearn.preprocessing import StandardScaler # Removed - Input is already processed
+from sklearn.decomposition import PCA # Keep for potentially selecting components if needed later
 import joblib
 import os
 import warnings
+from mpl_toolkits.mplot3d import Axes3D # Keep if 3D plot is desired
 
+# --- Configuration ---
+# Input data file - updated to final.csv
+INPUT_DATA_FILE = '../final.csv'
+# Original unprocessed data file (not needed if final.csv has all needed columns)
 
-def load_data(file_path='../data.csv'):
-    """Load the scaled dataset."""
-    print(f"Loading data from {file_path}...")
-    df = pd.read_csv(file_path)
-    print(f"Data loaded with shape: {df.shape}")
-    # Separate features and target (if Potability exists)
-    if 'Potability' in df.columns:
-        print("'Potability' column found.")
-        y = df['Potability'].astype(int)
-        X = df.drop('Potability', axis=1)
-    else:
-        print("'Potability' column not found.")
-        X = df
-        y = None
-    return X, y, df # Return original df too
+OUTPUT_DIR = '.' # Save outputs in the current (gmm) directory
+PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
+MODEL_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'gmm_model_k{k}.joblib')
+CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'gmm_clustered_data_k{k}.csv')
 
-def find_optimal_components(X, max_components=10, plot_dir='gmm/plots'):
+MAX_COMPONENTS = 15 # Max number of GMM components to test
+RANDOM_STATE = 42
+
+warnings.filterwarnings('ignore')
+
+def load_pca_data(file_path):
+    """Load the PCA data."""
+    print(f"Loading PCA data from {file_path}...")
+    try:
+        df = pd.read_csv(file_path)
+        print(f"Data loaded with shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()[:10]}...")
+        
+        # Extract only the PCA components for clustering
+        pca_cols = [col for col in df.columns if col.startswith('PC') and col[2:].isdigit()]
+        print(f"Using PCA columns: {pca_cols}")
+        X = df[pca_cols]
+        
+        # Also return the full dataframe for later reference
+        return X, df
+    except FileNotFoundError:
+        print(f"Error: Input data file not found at {file_path}")
+        return None, None
+    except Exception as e:
+        print(f"Error loading PCA data: {e}")
+        return None, None
+
+def find_optimal_components(X, max_components=15, plot_dir='plots'):
     """Find the optimal number of GMM components using BIC and AIC."""
     print("\n--- Finding Optimal Number of Components (BIC/AIC) ---")
-    n_components_range = range(1, max_components + 1)
+    # Ensure X is a numpy array for GMM fitting
+    X_np = X.values if isinstance(X, pd.DataFrame) else X
+
+    n_components_range = range(2, max_components + 1)
     bics = []
     aics = []
 
     for n_components in n_components_range:
         print(f"Calculating for n_components={n_components}...")
-        gmm = GaussianMixture(n_components=n_components, 
-                              covariance_type='full',
-                              random_state=42,
-                              n_init=5, 
-                              init_params='kmeans' 
-                             )
-        gmm.fit(X)
-        bics.append(gmm.bic(X))
-        aics.append(gmm.aic(X))
-        print(f"  BIC: {bics[-1]:.2f}, AIC: {aics[-1]:.2f}")
+        try:
+            gmm = GaussianMixture(n_components=n_components,
+                                  covariance_type='full',
+                                  random_state=RANDOM_STATE,
+                                  n_init=5,
+                                  init_params='kmeans')
+            gmm.fit(X_np)
+            bics.append(gmm.bic(X_np))
+            aics.append(gmm.aic(X_np))
+            print(f"  BIC: {bics[-1]:.2f}, AIC: {aics[-1]:.2f}")
+        except Exception as e:
+             print(f"  Error calculating BIC/AIC for {n_components} components: {e}")
+             bics.append(np.inf)
+             aics.append(np.inf)
+
+    # Filter out failed calculations
+    valid_indices = [(c, bic, aic) for c, bic, aic in zip(n_components_range, bics, aics) if not (np.isinf(bic) or np.isinf(aic))]
+    if not valid_indices:
+        print("Error: Could not calculate BIC/AIC for any component count. Defaulting to k=3.")
+        return 3
+
+    valid_k_range, valid_bics, valid_aics = zip(*valid_indices)
 
     # --- Plotting BIC and AIC ---
+    os.makedirs(plot_dir, exist_ok=True)
     plt.figure(figsize=(10, 6))
-    plt.plot(n_components_range, bics, marker='o', linestyle='--', label='BIC')
-    plt.plot(n_components_range, aics, marker='s', linestyle=':', label='AIC')
+    plt.plot(valid_k_range, valid_bics, marker='o', linestyle='--', label='BIC')
+    plt.plot(valid_k_range, valid_aics, marker='s', linestyle=':', label='AIC')
     plt.title('GMM BIC and AIC Scores')
-    plt.xlabel('Number of Components')
+    plt.xlabel('Number of Components (k)')
     plt.ylabel('Information Criterion Score (Lower is better)')
-    plt.xticks(n_components_range)
+    plt.xticks(list(n_components_range))
     plt.legend()
     plt.grid(True)
     bic_aic_plot_path = os.path.join(plot_dir, 'gmm_bic_aic.png')
-    plt.savefig(bic_aic_plot_path)
+    try:
+        plt.savefig(bic_aic_plot_path)
+        print(f"BIC/AIC plot saved to {bic_aic_plot_path}")
+    except Exception as e:
+         print(f"Error saving BIC/AIC plot: {e}")
     plt.close()
-    print(f"BIC/AIC plot saved to {bic_aic_plot_path}")
 
-    optimal_n_components_bic = n_components_range[np.argmin(bics)]
-    print(f"Optimal number of components based on BIC: {optimal_n_components_bic}")
+    # Optimal k: Choose the minimum BIC
+    optimal_k = valid_k_range[np.argmin(valid_bics)]
+    print(f"Optimal number of components based on BIC: {optimal_k}")
 
-    if optimal_n_components_bic == 1:
-        print("BIC suggests k=1, which is not suitable for silhouette scoring.")
-        optimal_n_components_aic = n_components_range[np.argmin(aics)]
-        optimal_n_components = max(2, optimal_n_components_aic) # Ensure at least k=2
-        print(f"Falling back to AIC suggestion or min k=2. Using k = {optimal_n_components}")
-    else:
-        optimal_n_components = optimal_n_components_bic
-        print(f"Using optimal k = {optimal_n_components} based on BIC.")
-
-    return optimal_n_components
+    return optimal_k
 
 def perform_gmm(X, n_components, random_state=42):
     """Perform GMM clustering with the specified number of components."""
     print(f"\n--- Performing GMM Clustering (n_components={n_components}) ---")
+    # Ensure X is a numpy array for GMM fitting
+    X_np = X.values if isinstance(X, pd.DataFrame) else X
+
     gmm = GaussianMixture(n_components=n_components,
                           covariance_type='full',
                           random_state=random_state,
-                          n_init=10, # More initializations for the final model
+                          n_init=10,
                           init_params='kmeans')
-    gmm.fit(X)
-    labels = gmm.predict(X)
-    probs = gmm.predict_proba(X)
-    silhouette_avg = -999 # Default placeholder
+    try:
+        gmm.fit(X_np)
+        labels = gmm.predict(X_np)
+        probs = gmm.predict_proba(X_np)
+    except Exception as e:
+        print(f"Error during GMM fitting: {e}")
+        return None, np.array([]), np.array([])
+
+    silhouette_avg = np.nan
     if n_components > 1:
         try:
-            silhouette_avg = silhouette_score(X, labels)
+            silhouette_avg = silhouette_score(X_np, labels)
             print(f"GMM completed.")
             print(f"  Average Silhouette Score: {silhouette_avg:.4f}")
         except ValueError as e:
             print(f"Could not calculate Silhouette Score: {e}")
-            silhouette_avg = -998 
     else:
         print("GMM completed with k=1. Silhouette score not applicable.")
-        
-    
+
     return gmm, labels, probs
 
-def visualize_clusters_pca(X, labels, y, plot_dir='gmm/plots', algorithm_name='GMM', k=None, random_state=42):
-    """Visualize the clusters using PCA."""
-    print("\n--- Visualizing Clusters using PCA --- ")
-    pca = PCA(n_components=2, random_state=random_state)
-    X_pca = pca.fit_transform(X)
-
-    plt.figure(figsize=(12, 8))
+def visualize_clusters(X_orig, labels, plot_dir='plots', filename_suffix='', algorithm_name='GMM', k=None):
+    """Visualize the clusters with matched style to reference plots."""
+    print(f"\n--- Visualizing Clusters ({filename_suffix}) ---")
     
+    # Create figure with the same square dimensions as the reference plot
+    plt.figure(figsize=(14, 12))
+    
+    # Extract the first two PCA components for plotting
+    X_values = X_orig.values if isinstance(X_orig, pd.DataFrame) else X_orig
+    X_plot = X_values[:, :2]  # First two components
+    
+    # Get unique cluster labels
     unique_labels = np.unique(labels)
     if k is None:
-        k = len(unique_labels) # Infer k if not provided
+        k = len(unique_labels)
+    
+    # Create color map using viridis (same as reference)
     colors = plt.cm.viridis(np.linspace(0, 1, k))
-
-    # Plot data points with cluster colors
-    for cluster_label, color in zip(unique_labels, colors):
-        cluster_points = X_pca[labels == cluster_label]
-        plt.scatter(cluster_points[:, 0], cluster_points[:, 1], s=50, c=[color],
-                    label=f'Cluster {cluster_label}', alpha=0.6)
-
-
-    plt.title(f'{algorithm_name} Clustering Results (k={k}, PCA Reduced)')
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-    plt.legend()
-    plt.grid(True)
-    pca_plot_path = os.path.join(plot_dir, f'gmm_clusters_pca_k{k}.png')
-    plt.savefig(pca_plot_path)
+    
+    # Main scatter plot with larger points (s=150 like in reference)
+    scatter = plt.scatter(X_plot[:, 0], X_plot[:, 1], 
+                         c=labels, 
+                         cmap='viridis',
+                         s=150,  # Matched to reference
+                         alpha=0.7,  # Same alpha as reference
+                         edgecolor='w',  # White edge for better visibility
+                         linewidth=0.5)
+    
+    # Add title and labels
+    plt.title(f'{algorithm_name} Clustering (k={k})', fontsize=14)
+    plt.xlabel('Principal Component 1', fontsize=12)
+    plt.ylabel('Principal Component 2', fontsize=12)
+    
+    # Add grid with the same style as reference
+    plt.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Set axis limits to match the reference plot
+    plt.xlim(-4.5, 6.5)
+    plt.ylim(-4.5, 4.5)
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, label='Cluster')
+    cbar.ax.tick_params(labelsize=10)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(plot_dir, f'gmm_clusters_{filename_suffix}.png')
+    try:
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"Cluster plot saved to {plot_path}")
+    except Exception as e:
+        print(f"Error saving visualization plot: {e}")
     plt.close()
-    print(f"Cluster PCA plot saved to {pca_plot_path}")
-
-    # --- Optional: Visualize with original Potability labels if available ---
-    if y is not None:
-        plt.figure(figsize=(12, 8))
-        scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='coolwarm', alpha=0.6, s=50)
-        plt.title('PCA Reduced Data Colored by Original Potability')
-        plt.xlabel('Principal Component 1')
-        plt.ylabel('Principal Component 2')
-        handles, _ = scatter.legend_elements(prop="colors", alpha=0.6)
-        legend_labels = [f'Potability {label}' for label in np.unique(y)]
-        plt.legend(handles, legend_labels, title="Original Labels")
-        plt.grid(True)
-        pca_potability_plot_path = os.path.join(plot_dir, 'pca_colored_by_potability.png') # Overwrite is fine
-        plt.savefig(pca_potability_plot_path)
-        plt.close()
-        print(f"PCA plot colored by Potability saved to {pca_potability_plot_path}")
 
 def main():
-    # --- Configuration ---
-    DATA_FILE = '../data.csv'
-    OUTPUT_DIR = '.'
-    PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
-    MODEL_FILE = os.path.join(OUTPUT_DIR, 'gmm_model.joblib')
-    CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'gmm_clustered_data_k{k}.csv')
-    MAX_COMPONENTS = 15 # Max number of components to test
-    RANDOM_STATE = 42
-
     # --- Ensure output directories exist ---
     os.makedirs(PLOT_DIR, exist_ok=True)
 
-    # --- Load Data ---
-    X, y, df_original_with_target = load_data(DATA_FILE)
+    # --- Load PCA Data ---
+    X, full_df = load_pca_data(INPUT_DATA_FILE)
+    if X is None:
+        return  # Exit if data loading failed
 
-    # --- Ensure data is scaled ---
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    print("Data scaling confirmed/re-applied.")
+    # --- STEP 1: Run GMM with fixed k=3 ---
+    fixed_k = 3
+    print(f"\n=== Running GMM with fixed k={fixed_k} ===")
+    gmm_fixed, labels_fixed, probs_fixed = perform_gmm(X, n_components=fixed_k, random_state=RANDOM_STATE)
+    
+    if gmm_fixed is None:
+        print(f"GMM with k={fixed_k} failed. Continuing to optimal k...")
+    else:
+        # Save model results
+        fixed_model_file = MODEL_FILE_TEMPLATE.format(k=fixed_k)
+        try:
+            joblib.dump(gmm_fixed, fixed_model_file)
+            print(f"GMM model for k={fixed_k} saved to {fixed_model_file}")
+        except Exception as e:
+            print(f"Error saving GMM model for k={fixed_k}: {e}")
+        
+        # Visualize the fixed k results
+        visualize_clusters(X, labels_fixed, plot_dir=PLOT_DIR, 
+                          filename_suffix=f"k{fixed_k}", k=fixed_k)
+        
+        # Save clustered data
+        fixed_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(k=fixed_k)
+        df_fixed_output = full_df.copy()
+        df_fixed_output['Cluster_GMM'] = labels_fixed
+        for i in range(fixed_k):
+            df_fixed_output[f'Cluster_{i}_Prob'] = probs_fixed[:, i]
+        try:
+            df_fixed_output.to_csv(fixed_output_file, index=False)
+            print(f"Clustered data for k={fixed_k} saved to {fixed_output_file}")
+        except Exception as e:
+            print(f"Error saving clustered data for k={fixed_k}: {e}")
 
-    # --- Find Optimal Number of Components ---
-    optimal_k = find_optimal_components(X_scaled, max_components=MAX_COMPONENTS, plot_dir=PLOT_DIR)
+    # --- STEP 2: Find Optimal Number of Components ---
+    print("\n=== Finding Optimal Number of Components ===")
+    optimal_k = find_optimal_components(X, max_components=MAX_COMPONENTS, plot_dir=PLOT_DIR)
 
-    # --- Perform GMM Clustering ---
-    gmm_model, labels, probabilities = perform_gmm(X_scaled, n_components=optimal_k, random_state=RANDOM_STATE)
-
-    # --- Save Model ---
-    joblib.dump(gmm_model, MODEL_FILE)
-    print(f"\nGMM model saved to {MODEL_FILE}")
-
-    # --- Add Cluster Labels and Probabilities to Original Data ---
-    df_clustered = df_original_with_target.loc[X.index].copy()
-    df_clustered['Cluster'] = labels
-    # Add probability columns for each component
-    for i in range(optimal_k):
-        df_clustered[f'Cluster_{i}_Prob'] = probabilities[:, i]
-    print("\nCluster labels and probabilities generated (not saving clustered data file).")
-
-    # --- Visualize Results ---
-    visualize_clusters_pca(X_scaled, labels, y, plot_dir=PLOT_DIR, k=optimal_k, random_state=RANDOM_STATE)
+    # Skip this step if optimal_k is the same as fixed_k
+    if optimal_k == fixed_k:
+        print(f"Optimal number of components ({optimal_k}) is the same as fixed k ({fixed_k}). Skipping duplicate clustering.")
+    else:
+        # --- STEP 3: Run GMM with Optimal k ---
+        print(f"\n=== Running GMM with optimal k={optimal_k} ===")
+        gmm_opt, labels_opt, probs_opt = perform_gmm(X, n_components=optimal_k, random_state=RANDOM_STATE)
+        
+        if gmm_opt is None:
+            print(f"GMM with optimal k={optimal_k} failed.")
+        else:
+            # Save model results
+            opt_model_file = MODEL_FILE_TEMPLATE.format(k=optimal_k)
+            try:
+                joblib.dump(gmm_opt, opt_model_file)
+                print(f"GMM model for optimal k={optimal_k} saved to {opt_model_file}")
+            except Exception as e:
+                print(f"Error saving GMM model for optimal k={optimal_k}: {e}")
+            
+            # Visualize the optimal k results
+            visualize_clusters(X, labels_opt, plot_dir=PLOT_DIR, 
+                              filename_suffix=f"optimal_k{optimal_k}", k=optimal_k)
+            
+            # Save clustered data
+            opt_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(k=optimal_k)
+            df_opt_output = full_df.copy()
+            df_opt_output['Cluster_GMM'] = labels_opt
+            for i in range(optimal_k):
+                df_opt_output[f'Cluster_{i}_Prob'] = probs_opt[:, i]
+            try:
+                df_opt_output.to_csv(opt_output_file, index=False)
+                print(f"Clustered data for optimal k={optimal_k} saved to {opt_output_file}")
+            except Exception as e:
+                print(f"Error saving clustered data for optimal k={optimal_k}: {e}")
 
     print("\nGMM clustering process completed!")
-
+    print("Summary:")
+    print(f"1. Fixed k={fixed_k} clustering")
+    print(f"2. Optimal k={optimal_k} clustering")
 
 if __name__ == "__main__":
-    main() 
+    main()

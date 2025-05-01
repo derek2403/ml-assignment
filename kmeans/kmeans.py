@@ -1,202 +1,307 @@
-
+# Path: kmeans/kmeans.py
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+# import seaborn as sns # Keep removed
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, silhouette_samples
-from sklearn.preprocessing import StandardScaler  
-from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+# from sklearn.preprocessing import StandardScaler # REMOVED - Input is PCA data
+# from sklearn.decomposition import PCA # REMOVED - Input is PCA data, only used for visualization if needed
 import joblib
 import os
 import warnings
+from mpl_toolkits.mplot3d import Axes3D # For optional 3D plot
 
+# === Configuration ===
+# Input data file - updated to final.csv
+INPUT_DATA_FILE = '../final.csv'
+# Original unprocessed data file (needed for merging final results)
+ORIGINAL_UNPROCESSED_DATA_FILE = '../../dataset.csv' # Adjust path if needed
 
-warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn.cluster._kmeans")
-warnings.filterwarnings("ignore", category=UserWarning, message="KMeans is known to have a memory leak on Windows with MKL")
+OUTPUT_DIR = '.' # Output in the current directory
+PLOT_DIR = os.path.join(OUTPUT_DIR, 'plots')
+MODEL_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'kmeans_model_{suffix}.joblib')
+CLUSTERED_DATA_FILE_TEMPLATE = os.path.join(OUTPUT_DIR, 'kmeans_clustered_data_{suffix}.csv')
+MAX_K = 15 # Max number of clusters to test
+RANDOM_STATE = 42
 
-def load_data(file_path='../data.csv'):
-    """Load the scaled dataset."""
-    print(f"Loading data from {file_path}...")
-    df = pd.read_csv(file_path)
-    print(f"Data loaded with shape: {df.shape}")
-    # Separate features and target (if Potability exists)
-    if 'Potability' in df.columns:
-        print("'Potability' column found. Using it for visualization later.")
-        y = df['Potability'].astype(int) # Ensure integer type for coloring
-        X = df.drop('Potability', axis=1)
-    else:
-        print("'Potability' column not found. Proceeding without target variable.")
-        X = df
-        y = None
-    return X, y, df # Return original df too for saving later
+warnings.filterwarnings('ignore') # Suppress warnings
 
-def find_optimal_k(X, max_k=10, plot_dir='kmeans/plot'):
-    """Find the optimal number of clusters using Elbow and Silhouette methods."""
-    print("\n--- Finding Optimal K (Elbow and Silhouette) ---")
+# === Helper Functions ===
+
+def load_pca_data(file_path):
+    """Load the PCA data."""
+    print(f"Loading PCA data from {file_path}...")
+    try:
+        df = pd.read_csv(file_path)
+        print(f"Data loaded with shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()[:10]}...")
+        
+        # Extract only the PCA components for clustering
+        pca_cols = [col for col in df.columns if col.startswith('PC') and col[2:].isdigit()]
+        print(f"Using PCA columns: {pca_cols}")
+        X = df[pca_cols]
+        
+        # Also return the full dataframe for later reference
+        return X, df
+    except FileNotFoundError:
+        print(f"Error: Input data file not found at {file_path}")
+        return None, None
+    except Exception as e:
+        print(f"Error loading PCA data: {e}")
+        return None, None
+
+def load_original_data_for_reference(file_path):
+    """Loads original data just to get reference columns like ID, Name etc."""
+    print(f"Loading original (unprocessed) data for reference from {file_path}...")
+    try:
+        # Use latin1 encoding as determined before
+        df_orig = pd.read_csv(file_path, encoding='latin1')
+        # Clean column names for consistency
+        df_orig.columns = df_orig.columns.str.replace('\n', '', regex=False).str.replace('?', '', regex=False).str.strip()
+        df_orig = df_orig.rename(columns={'STNCode': 'STN_Code'}) # Rename ID column if needed
+        print(f"Original reference data loaded with shape: {df_orig.shape}")
+        # Keep only identifier/reference columns
+        ref_cols = ['STN_Code', 'Name of Monitoring Location', 'Type Water Body', 'State Name'] # Adjust if needed
+        # Filter out columns that don't exist in the original file
+        ref_cols_exist = [col for col in ref_cols if col in df_orig.columns]
+        return df_orig[ref_cols_exist]
+    except FileNotFoundError:
+        print(f"Error: Original data file not found at {file_path}")
+        print("Cannot add reference info to clustered output.")
+        return None
+    except Exception as e:
+        print(f"Error loading original data: {e}")
+        return None
+
+def find_optimal_k(X, max_k=15, plot_dir='plots', random_state=42):
+    """Find optimal K using Elbow and Silhouette methods on PCA data."""
+    print("\n--- Finding Optimal K (Elbow and Silhouette on PCA data) ---")
+    # Input X is already PCA data (DataFrame)
+    X_values = X.values # Use numpy array for KMeans
+
     inertias = []
     silhouette_scores = []
-    k_range = range(2, max_k + 1)
+    k_range = range(2, max_k + 1) # Start from 2 clusters
 
     for k in k_range:
         print(f"Calculating for k={k}...")
-        kmeans = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=42)
-        kmeans.fit(X)
-        inertias.append(kmeans.inertia_)
-        
-        # Calculate silhouette score only if more than 1 cluster
-        if k > 1:
-            score = silhouette_score(X, kmeans.labels_)
+        try:
+            kmeans = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=random_state)
+            kmeans.fit(X_values)
+            inertias.append(kmeans.inertia_)
+            score = silhouette_score(X_values, kmeans.labels_)
             silhouette_scores.append(score)
             print(f"  Inertia: {kmeans.inertia_:.2f}, Silhouette Score: {score:.4f}")
-        else:
-             print(f"  Inertia: {kmeans.inertia_:.2f}")
+        except Exception as e:
+            print(f"  Error calculating for k={k}: {e}")
+            inertias.append(np.nan)
+            silhouette_scores.append(np.nan)
 
+    # Filter out failed calculations
+    valid_indices = [i for i, score in enumerate(silhouette_scores) if not np.isnan(score)]
+    if not valid_indices:
+        print("Error: Could not calculate Silhouette scores for any k > 1. Defaulting to k=3.")
+        optimal_k = 3
+    else:
+        valid_k_range = [k_range[i] for i in valid_indices]
+        valid_inertias = [inertias[i] for i in valid_indices]
+        valid_silhouette_scores = [silhouette_scores[i] for i in valid_indices]
 
-    # --- Plotting Elbow Method ---
-    plt.figure(figsize=(10, 6))
-    plt.plot(k_range, inertias, marker='o', linestyle='--')
-    plt.title('Elbow Method for Optimal K')
-    plt.xlabel('Number of Clusters (k)')
-    plt.ylabel('Inertia (Within-cluster sum of squares)')
-    plt.xticks(k_range)
-    plt.grid(True)
-    elbow_plot_path = os.path.join(plot_dir, 'elbow_method.png')
-    plt.savefig(elbow_plot_path)
-    plt.close()
-    print(f"Elbow method plot saved to {elbow_plot_path}")
-
-    # --- Plotting Silhouette Scores ---
-    if len(k_range) > 1 and len(silhouette_scores) > 0: # Ensure we have scores to plot
+        # --- Plotting Elbow Method ---
         plt.figure(figsize=(10, 6))
-        plt.plot(k_range, silhouette_scores, marker='o', linestyle='--')
-        plt.title('Silhouette Score for Optimal K')
+        plt.plot(valid_k_range, valid_inertias, marker='o', linestyle='--')
+        plt.title('Elbow Method for Optimal K (on PCA data)')
+        plt.xlabel('Number of Clusters (k)')
+        plt.ylabel('Inertia (Within-cluster sum of squares)')
+        plt.xticks(valid_k_range)
+        plt.grid(True)
+        elbow_plot_path = os.path.join(plot_dir, 'elbow_method_pca.png')
+        plt.savefig(elbow_plot_path)
+        plt.close()
+        print(f"Elbow method plot saved to {elbow_plot_path}")
+
+        # --- Plotting Silhouette Scores ---
+        plt.figure(figsize=(10, 6))
+        plt.plot(valid_k_range, valid_silhouette_scores, marker='o', linestyle='--')
+        plt.title('Silhouette Score for Optimal K (on PCA data)')
         plt.xlabel('Number of Clusters (k)')
         plt.ylabel('Average Silhouette Score')
-        plt.xticks(k_range)
+        plt.xticks(valid_k_range)
         plt.grid(True)
-        silhouette_plot_path = os.path.join(plot_dir, 'silhouette_scores.png')
+        silhouette_plot_path = os.path.join(plot_dir, 'silhouette_scores_pca.png')
         plt.savefig(silhouette_plot_path)
         plt.close()
         print(f"Silhouette score plot saved to {silhouette_plot_path}")
 
         # --- Determine Optimal K based on Silhouette Score ---
-        optimal_k_silhouette = k_range[np.argmax(silhouette_scores)]
-        print(f"Optimal K based on Silhouette Score: {optimal_k_silhouette}")
-
-        optimal_k = optimal_k_silhouette
-    else:
-        # Fallback if only k=1 was tested or no scores available
-        print("Warning: Could not determine optimal k from Silhouette. Inspect Elbow plot manually.")
-        optimal_k = 3
-        print(f"Defaulting to k={optimal_k}. Please verify using the Elbow plot.")
+        optimal_k = valid_k_range[np.argmax(valid_silhouette_scores)]
+        print(f"Optimal K based on Silhouette Score: {optimal_k}")
 
     return optimal_k
 
-
 def perform_kmeans(X, k, random_state=42):
-    """Perform K-Means clustering with the specified number of clusters."""
-    print(f"\n--- Performing K-Means Clustering with k={k} ---")
+    """Perform K-Means clustering on the input data (assumed PCA)."""
+    print(f"\n--- Performing K-Means Clustering with k={k} (on PCA data) ---")
+    X_values = X.values # Use numpy array for KMeans
     kmeans = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=random_state)
-    kmeans.fit(X)
-    labels = kmeans.labels_
-    centers = kmeans.cluster_centers_
-    inertia = kmeans.inertia_
-    silhouette_avg = silhouette_score(X, labels)
+    try:
+        kmeans.fit(X_values)
+        labels = kmeans.labels_
+        centers = kmeans.cluster_centers_ # Centers in the original PCA space (e.g., 10 dims)
+        inertia = kmeans.inertia_
+        silhouette_avg = silhouette_score(X_values, labels)
+        print(f"K-Means completed.")
+        print(f"  Inertia: {inertia:.2f}")
+        print(f"  Average Silhouette Score: {silhouette_avg:.4f}")
+        return kmeans, labels, centers
+    except Exception as e:
+        print(f"Error during K-Means fitting: {e}")
+        return None, None, None
 
-    print(f"K-Means completed.")
-    print(f"  Inertia: {inertia:.2f}")
-    print(f"  Average Silhouette Score: {silhouette_avg:.4f}")
-    return kmeans, labels, centers
-
-def visualize_clusters_pca(X, labels, centers, y, plot_dir='kmeans/plot', k=None, random_state=42):
-    """Visualize the clusters using PCA for dimensionality reduction."""
-    print("\n--- Visualizing Clusters using PCA --- ")
-    pca = PCA(n_components=2, random_state=random_state)
-    X_pca = pca.fit_transform(X)
-    centers_pca = pca.transform(centers) if centers is not None else None
-
-    plt.figure(figsize=(12, 8))
-
-    # Determine unique labels and create a color map
+def visualize_clusters(X, labels, centers, plot_dir='plots', filename_suffix='', k=None):
+    """Visualize the clusters with matched style to reference plots."""
+    print(f"\n--- Visualizing Clusters ({filename_suffix}) ---")
+    
+    # Create figure with the same square dimensions as the reference plot
+    plt.figure(figsize=(14, 12))
+    
+    # Extract the first two PCA components for plotting
+    X_values = X.values if isinstance(X, pd.DataFrame) else X
+    X_plot = X_values[:, :2]  # First two components
+    
+    # Get unique cluster labels
     unique_labels = np.unique(labels)
     if k is None:
-        k = len(unique_labels) # Infer k if not provided
-    colors = plt.cm.viridis(np.linspace(0, 1, k))
-
-    # Plot data points with cluster colors
-    for cluster_label, color in zip(unique_labels, colors):
-        cluster_points = X_pca[labels == cluster_label]
-        plt.scatter(cluster_points[:, 0], cluster_points[:, 1], s=50, c=[color], # Use list for color
-                    label=f'Cluster {cluster_label}', alpha=0.6)
-
-    # Plot cluster centers
-    if centers_pca is not None:
-        plt.scatter(centers_pca[:, 0], centers_pca[:, 1], s=250, marker='*',
-                    c='red', edgecolor='black', label='Centroids')
-
-    plt.title('K-Means Clustering Results (PCA Reduced)')
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-    plt.legend()
-    plt.grid(True)
-    pca_plot_path = os.path.join(plot_dir, 'kmeans_clusters_pca.png')
-    plt.savefig(pca_plot_path)
+        k = len(unique_labels)
+    
+    # Main scatter plot with larger points (s=150 like in reference)
+    scatter = plt.scatter(X_plot[:, 0], X_plot[:, 1], 
+                         c=labels, 
+                         cmap='viridis',
+                         s=150,  # Matched to reference
+                         alpha=0.7,  # Same alpha as reference
+                         edgecolor='w',  # White edge for better visibility
+                         linewidth=0.5)
+    
+    # Plot centroids
+    if centers is not None:
+        centers_plot = centers[:, :2]  # First two components
+        plt.scatter(centers_plot[:, 0], centers_plot[:, 1], 
+                   s=250, marker='X', c='red', 
+                   edgecolor='black', linewidth=1.5,
+                   label='Centroids')
+    
+    # Add title and labels
+    plt.title(f'KMeans Clustering (k={k})', fontsize=14)
+    plt.xlabel('Principal Component 1', fontsize=12)
+    plt.ylabel('Principal Component 2', fontsize=12)
+    
+    # Add grid with the same style as reference
+    plt.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Set axis limits to match the reference plot
+    plt.xlim(-4.5, 6.5)
+    plt.ylim(-4.5, 4.5)
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, label='Cluster')
+    cbar.ax.tick_params(labelsize=10)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(plot_dir, f'kmeans_clusters_{filename_suffix}.png')
+    try:
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"Cluster plot saved to {plot_path}")
+    except Exception as e:
+        print(f"Error saving visualization plot: {e}")
     plt.close()
-    print(f"Cluster PCA plot saved to {pca_plot_path}")
-
-    # --- Optional: Visualize with original Potability labels if available ---
-    if y is not None:
-        plt.figure(figsize=(12, 8))
-        scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='coolwarm', alpha=0.6, s=50)
-        plt.title('PCA Reduced Data Colored by Original Potability')
-        plt.xlabel('Principal Component 1')
-        plt.ylabel('Principal Component 2')
-        # Create a legend for Potability
-        handles, _ = scatter.legend_elements(prop="colors", alpha=0.6)
-        legend_labels = [f'Potability {label}' for label in np.unique(y)]
-        plt.legend(handles, legend_labels, title="Original Labels")
-        plt.grid(True)
-        pca_potability_plot_path = os.path.join(plot_dir, 'pca_colored_by_potability.png')
-        plt.savefig(pca_potability_plot_path)
-        plt.close()
-        print(f"PCA plot colored by Potability saved to {pca_potability_plot_path}")
 
 def main():
-    # --- Configuration ---
-    DATA_FILE = '../data.csv'
-    OUTPUT_DIR = '.'
-    PLOT_DIR = os.path.join(OUTPUT_DIR, 'plot')
-    MODEL_FILE = os.path.join(OUTPUT_DIR, 'kmeans_model.joblib')
-    CLUSTERED_DATA_FILE = os.path.join(OUTPUT_DIR, 'kmeans_clustered_data.csv')
-    MAX_K = 15 # Range of k to test
-    RANDOM_STATE = 42
-
     # --- Ensure output directories exist ---
     os.makedirs(PLOT_DIR, exist_ok=True)
 
-    # --- Load Data ---
-    X, y, df_original_with_target = load_data(DATA_FILE)
+    # --- Load PCA Data ---
+    X, full_df = load_pca_data(INPUT_DATA_FILE)
+    if X is None:
+        return  # Exit if data loading failed
 
-    # --- Find Optimal K ---
-    # It's good practice to ensure data is scaled, even if loaded from scaled.csv
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    optimal_k = find_optimal_k(X_scaled, max_k=MAX_K, plot_dir=PLOT_DIR)
+    # --- Load Original Data for Reference ---
+    df_original_ref = load_original_data_for_reference(ORIGINAL_UNPROCESSED_DATA_FILE)
 
-    # --- Perform K-Means ---
-    kmeans_model, labels, centers = perform_kmeans(X_scaled, k=optimal_k, random_state=RANDOM_STATE)
+    # --- STEP 1: Run KMeans with fixed k=3 ---
+    fixed_k = 3
+    print(f"\n=== Running KMeans with fixed k={fixed_k} ===")
+    kmeans_k3, labels_k3, centers_k3 = perform_kmeans(X, k=fixed_k, random_state=RANDOM_STATE)
+    
+    if kmeans_k3 is None:
+        print(f"KMeans with k={fixed_k} failed. Continuing to optimal k...")
+    else:
+        # Save model results
+        k3_model_file = MODEL_FILE_TEMPLATE.format(suffix=f"k{fixed_k}")
+        try:
+            joblib.dump(kmeans_k3, k3_model_file)
+            print(f"KMeans model for k={fixed_k} saved to {k3_model_file}")
+        except Exception as e:
+            print(f"Error saving KMeans model for k={fixed_k}: {e}")
+        
+        # Visualize the fixed k results
+        visualize_clusters(X, labels_k3, centers_k3, plot_dir=PLOT_DIR, 
+                          filename_suffix=f"k{fixed_k}", k=fixed_k)
+        
+        # Save clustered data
+        k3_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(suffix=f"k{fixed_k}")
+        df_k3_output = full_df.copy()
+        df_k3_output['Cluster_KMeans'] = labels_k3
+        try:
+            df_k3_output.to_csv(k3_output_file, index=False)
+            print(f"Clustered data for k={fixed_k} saved to {k3_output_file}")
+        except Exception as e:
+            print(f"Error saving clustered data for k={fixed_k}: {e}")
 
-    # --- Save Model ---
-    joblib.dump(kmeans_model, MODEL_FILE)
-    print(f"\nK-Means model saved to {MODEL_FILE}")
+    # --- STEP 2: Find Optimal Number of Clusters ---
+    print("\n=== Finding Optimal Number of Clusters ===")
+    optimal_k = find_optimal_k(X, max_k=MAX_K, plot_dir=PLOT_DIR, random_state=RANDOM_STATE)
 
-    df_clustered = df_original_with_target.loc[X.index].copy() # Ensure we use correct rows if some were dropped
-    print("\nCluster labels generated (not saving clustered data file).")
-    visualize_clusters_pca(X_scaled, labels, centers, y, plot_dir=PLOT_DIR, k=optimal_k, random_state=RANDOM_STATE)
+    # Skip this step if optimal_k is the same as fixed_k
+    if optimal_k == fixed_k:
+        print(f"Optimal number of clusters ({optimal_k}) is the same as fixed k ({fixed_k}). Skipping duplicate clustering.")
+    else:
+        # --- STEP 3: Run KMeans with Optimal k ---
+        print(f"\n=== Running KMeans with optimal k={optimal_k} ===")
+        kmeans_opt, labels_opt, centers_opt = perform_kmeans(X, k=optimal_k, random_state=RANDOM_STATE)
+        
+        if kmeans_opt is None:
+            print(f"KMeans with optimal k={optimal_k} failed.")
+        else:
+            # Save model results
+            opt_model_file = MODEL_FILE_TEMPLATE.format(suffix=f"optimal_k{optimal_k}")
+            try:
+                joblib.dump(kmeans_opt, opt_model_file)
+                print(f"KMeans model for optimal k={optimal_k} saved to {opt_model_file}")
+            except Exception as e:
+                print(f"Error saving KMeans model for optimal k={optimal_k}: {e}")
+            
+            # Visualize the optimal k results
+            visualize_clusters(X, labels_opt, centers_opt, plot_dir=PLOT_DIR, 
+                              filename_suffix=f"optimal_k{optimal_k}", k=optimal_k)
+            
+            # Save clustered data
+            opt_output_file = CLUSTERED_DATA_FILE_TEMPLATE.format(suffix=f"optimal_k{optimal_k}")
+            df_opt_output = full_df.copy()
+            df_opt_output['Cluster_KMeans'] = labels_opt
+            try:
+                df_opt_output.to_csv(opt_output_file, index=False)
+                print(f"Clustered data for optimal k={optimal_k} saved to {opt_output_file}")
+            except Exception as e:
+                print(f"Error saving clustered data for optimal k={optimal_k}: {e}")
 
-    print("\nK-Means clustering process completed!")
-
+    print("\nKMeans clustering process completed!")
+    print("Summary:")
+    print(f"1. Fixed k={fixed_k} clustering")
+    print(f"2. Optimal k={optimal_k} clustering")
 
 if __name__ == "__main__":
-    main() 
+    main()
