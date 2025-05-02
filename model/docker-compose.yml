@@ -2,10 +2,7 @@ version: '3.8'
 
 services:
   water-quality-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: derek2403/water-quality-api:latest
+    image: derek2403/water1:latest  # New unique image name
     container_name: water-quality-api
     platform: linux/amd64
     ports:
@@ -14,12 +11,9 @@ services:
       - FLASK_ENV=production
       - FLASK_APP=predict.py
     restart: unless-stopped
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 60s  # Increased to give more time for model loading

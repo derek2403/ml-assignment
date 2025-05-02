@@ -63,15 +63,16 @@ def load_model():
         print(f"Number of clusters: {fcm_model['n_clusters']}")
         print(f"Fuzziness parameter (m): {fcm_model['fuzziness_m']}")
         print(f"FPC (model quality): {fcm_model['fpc']:.4f}")
+        return True
 
     except FileNotFoundError as e:
         print(f"Error loading file: {e}. Make sure model files and final.csv are present.")
-        exit(1)
+        return False
     except Exception as e:
         print(f"An error occurred during model loading: {e}")
         import traceback
         traceback.print_exc()
-        exit(1)
+        return False
 
 def predict_cluster_fcm(X_pca_scaled):
     """Predict cluster using FCM model"""
@@ -222,6 +223,13 @@ def predict():
             "error": "Internal server error",
             "message": str(e)
         }), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    if fcm_model is not None and pca_model is not None and scaler is not None:
+        return jsonify({"status": "ok", "models": "loaded"})
+    else:
+        return jsonify({"status": "error", "models": "not loaded"}), 500
 
 load_model()
 
