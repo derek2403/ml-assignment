@@ -1,19 +1,20 @@
 import { useState } from 'react';
 
 // Define parameter ranges here for sliders - updated to match FCM model inputs
+// Reordered to group Max/Min pairs
 const paramRanges = {
   "Max Fecal Coliform": { min: 0, max: 2000, step: 10 },
-  "Min Temperature": { min: 5, max: 25, step: 0.1 },
-  "Max BOD": { min: 0, max: 10, step: 0.1 },
-  "Max Temperature": { min: 15, max: 40, step: 0.1 },
-  "Max Conductivity": { min: 100, max: 1500, step: 10 },
   "Min Fecal Coliform": { min: 0, max: 1000, step: 10 },
-  "Max Total Coliform": { min: 50, max: 3000, step: 10 },
+  "Max BOD": { min: 0, max: 10, step: 0.1 },
   "Min BOD": { min: 0, max: 8, step: 0.1 },
-  "Min Dissolved Oxygen": { min: 1, max: 10, step: 0.1 },
+  "Max Temperature": { min: 15, max: 40, step: 0.1 },
+  "Min Temperature": { min: 5, max: 25, step: 0.1 },
+  "Max Nitrate N + Nitrite N": { min: 0, max: 12, step: 0.1 },
   "Min Nitrate N + Nitrite N": { min: 0, max: 6, step: 0.1 },
-  "Min pH": { min: 4, max: 9, step: 0.1 },
-  "Max Nitrate N + Nitrite N": { min: 0, max: 12, step: 0.1 }
+  "Conductivity": { min: 100, max: 1500, step: 10 },
+  "Total Coliform": { min: 50, max: 3000, step: 10 },
+  "Dissolved Oxygen": { min: 1, max: 10, step: 0.1 },
+  "pH": { min: 4, max: 9, step: 0.1 }
 };
 
 // Function to get initial default values (e.g., midpoint)
@@ -120,8 +121,12 @@ export default function Home() {
             <h1 className="text-3xl font-bold mb-6 text-center text-blue-800">Water Quality Analysis</h1>
             
             <form onSubmit={handleSubmit} className="space-y-4">
-              {Object.entries(formData).map(([param, value]) => {
+              {/* Iterate over paramRanges keys to maintain the defined order */}
+              {Object.keys(paramRanges).map((param) => {
                 const range = paramRanges[param];
+                // Get the current value from formData state
+                const value = formData[param] || ((range.max + range.min) / 2).toFixed(range.step < 1 ? 1 : 0);
+                
                 return (
                   <div key={param} className="space-y-2">
                     <div className="flex justify-between items-center">
@@ -137,8 +142,8 @@ export default function Home() {
                       min={range.min}
                       max={range.max}
                       step={range.step}
-                      name={param}
-                      value={value}
+                      name={param} // Name should match the key in formData
+                      value={value} // Use the value from formData state
                       onChange={handleChange}
                       required
                       className="mt-1 block w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
